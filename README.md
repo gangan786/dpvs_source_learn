@@ -1,3 +1,9 @@
+# 简介
+此项目用于学习dpvs源码
+- 项目路径：`/home/app/dpvs`
+- 语言服务器: `clangd-14.0.0-1ubuntu1.1`
+---
+
 ![Build](https://github.com/iqiyi/dpvs/workflows/Build/badge.svg)  ![Run](https://github.com/iqiyi/dpvs/workflows/Run/badge.svg)
 
 ![dpvs-logo.png](./pic/DPVS-logo.png)

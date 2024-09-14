@@ -26,6 +26,13 @@
 
 #define DPVS_MAX_PROTOS         256     /* never change it */
 
+/*
+l4协议处理函数：
+&dp_vs_proto_udp
+&dp_vs_proto_tcp
+&dp_vs_proto_icmp6
+&dp_vs_proto_icmp
+*/
 static struct dp_vs_proto *dp_vs_protocols[DPVS_MAX_PROTOS];
 
 static int proto_register(struct dp_vs_proto *proto)

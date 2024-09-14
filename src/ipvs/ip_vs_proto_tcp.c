@@ -842,6 +842,7 @@ tcp_conn_lookup(struct dp_vs_proto *proto, const struct dp_vs_iphdr *iph,
         return NULL;
     }
 
+    //获取conn，dirct表示该连接的出入站方向
     conn = dp_vs_conn_get(iph->af, iph->proto,
             &iph->saddr, &iph->daddr, th->source, th->dest, direct, reverse);
 

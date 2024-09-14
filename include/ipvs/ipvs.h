@@ -31,7 +31,7 @@
 
 struct dp_vs_iphdr {
     int             af;
-    int             len;
+    int             len; /*ip头长度*/
     uint8_t         proto;
     union inet_addr saddr;
     union inet_addr daddr;

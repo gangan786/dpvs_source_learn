@@ -402,6 +402,7 @@ static int ipv4_rcv(struct rte_mbuf *mbuf, struct netif_port *port)
     if (mbuf_may_pull(mbuf, hlen) != 0)
         goto inhdr_error;
 
+    // 如果端口不支持接收IPv4校验和卸载，并且IPv4头校验和错误，则跳转到校验和错误处理
     if (unlikely(!(port->flag & NETIF_PORT_FLAG_RX_IP_CSUM_OFFLOAD))) {
         if (unlikely(rte_raw_cksum(iph, hlen) != 0xFFFF))
             goto csum_error;
@@ -428,6 +429,7 @@ static int ipv4_rcv(struct rte_mbuf *mbuf, struct netif_port *port)
     ip4_show_hdr(__func__, mbuf);
 #endif
 
+    // ospf协议交给kni处理
     if (unlikely(iph->next_proto_id == IPPROTO_OSPF))
         return EDPVS_KNICONTINUE;
 #ifdef CONFIG_ICMP_REDIRECT_CORE
@@ -456,7 +458,7 @@ drop:
 }
 
 static struct pkt_type ip4_pkt_type = {
-    //.type       = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4),
+    //.type       = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4), 在初始化ipv4_init中赋值
     .func       = ipv4_rcv,
     .port       = NULL,
 };

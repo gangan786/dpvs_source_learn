@@ -1052,6 +1052,7 @@ struct dp_vs_conn *dp_vs_conn_get(int af, uint16_t proto,
                     && tuphash->proto == proto
                     && tuphash->af == af) {
                 /* hit */
+                // 获取tuphash所在的conn对象
                 conn = tuplehash_to_conn(tuphash);
                 rte_atomic32_inc(&conn->refcnt);
                 if (dir)

@@ -366,7 +366,7 @@ struct dp_vs_service *dp_vs_service_lookup(int af, uint16_t protocol,
                                         lcoreid_t cid)
 {
     struct dp_vs_service *svc = NULL;
-
+    // 根据不同的参数，按照优先级查找
     if (fwmark && (svc = __dp_vs_service_fwm_get(af, fwmark, cid)))
         goto out;
 

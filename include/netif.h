@@ -84,6 +84,7 @@ struct netif_queue_conf
     queueid_t id;
     uint16_t len;
     struct rx_partner *isol_rxq;
+    // 缓存队列
     struct rte_mbuf *mbufs[NETIF_MAX_PKT_BURST];
 } __rte_cache_aligned;
 
@@ -173,6 +174,7 @@ struct netif_kni {
     struct rte_ether_addr   addr;
     struct dpvs_timer       kni_rtnl_timer;
     int                     kni_rtnl_fd;
+    // 缓存需要kni处理的数据
     struct rte_ring         *rx_ring;
     struct list_head        kni_flows;
 } __rte_cache_aligned;
@@ -256,7 +258,7 @@ struct netif_port {
     union netif_bond        *bond;                      /* bonding conf */
     struct vlan_info        *vlan_info;                 /* VLANs info for real device */
     struct netif_tc         tc[DPVS_MAX_LCORE];         /* traffic control */
-    struct netif_ops        *netif_ops;
+    struct netif_ops        *netif_ops;                 /* 有如下实现：&gre_dev_ops &ipip_dev_ops &dpdk_netif_ops &bond_netif_ops &vlan_netif_ops*/
 } __rte_cache_aligned;
 
 /**************************** mbuf pool ********************************/

@@ -140,7 +140,7 @@ static inline void ip4_send_csum(struct rte_ipv4_hdr *iph)
 }
 
 static inline bool ip4_is_frag(struct rte_ipv4_hdr *iph)
-{
+{   // 只要有分片标志，或者分片偏移不为0，则认为有分片
     return (iph->fragment_offset
             & htons(RTE_IPV4_HDR_MF_FLAG | RTE_IPV4_HDR_OFFSET_MASK)) != 0;
 }

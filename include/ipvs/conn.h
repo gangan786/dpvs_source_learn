@@ -111,6 +111,7 @@ struct dp_vs_conn {
     uint32_t                rs_end_seq;
     uint32_t                rs_end_ack;
 
+    // 这里面包含转发模式例如fallnat的处理
     int (*packet_xmit)(struct dp_vs_proto *prot,
                         struct dp_vs_conn *conn,
                         struct rte_mbuf *mbuf);

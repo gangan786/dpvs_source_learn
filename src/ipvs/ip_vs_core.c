@@ -39,6 +39,7 @@
 #include "route6.h"
 #include "ipvs/redirect.h"
 
+// 将mbuf中ip协议的相关信息填充到iph中
 static inline int dp_vs_fill_iphdr(int af, struct rte_mbuf *mbuf,
                                    struct dp_vs_iphdr *iph)
 {
@@ -294,6 +295,10 @@ struct dp_vs_conn *dp_vs_schedule(struct dp_vs_service *svc,
     if (svc->flags & DP_VS_SVC_F_PERSISTENT)
         return dp_vs_sched_persist(svc, iph,  mbuf, is_synproxy_on);
 
+    /**
+    根据调度算法，获取rs节点
+    1. 一致性hash调度：dp_vs_conhash_schedule
+     */
     dest = svc->scheduler->schedule(svc, mbuf, iph);
     if (!dest) {
         RTE_LOG(INFO, IPVS, "%s: no dest found.\n", __func__);
@@ -937,7 +942,7 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
     struct dp_vs_iphdr iph;
     struct dp_vs_proto *prot;
     struct dp_vs_conn *conn;
-    int dir, verdict, err, related;
+    int dir, verdict, err, related; /* dir表示方向？ */
     bool drop = false;
     lcoreid_t cid, peer_cid;
     eth_type_t etype = mbuf->packet_type; /* FIXME: use other field ? */
@@ -947,7 +952,7 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
 
     if (unlikely(etype != ETH_PKT_HOST))
         return INET_ACCEPT;
-
+    // 将mbuf中ip协议的相关信息填充到iph中
     if (dp_vs_fill_iphdr(af, mbuf, &iph) != EDPVS_OK)
         return INET_ACCEPT;
 
@@ -961,6 +966,13 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
          * may implement ICMP fwd in the futher. */
     }
 
+    /*
+    l4协议处理函数：
+    &dp_vs_proto_udp
+    &dp_vs_proto_tcp
+    &dp_vs_proto_icmp6
+    &dp_vs_proto_icmp
+    */
     prot = dp_vs_proto_lookup(iph.proto);
     if (unlikely(!prot))
         return INET_ACCEPT;
@@ -982,10 +994,13 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
         return INET_DROP;
     }
 
-    /* packet belongs to existing connection ? */
+    /* packet belongs to existing connection ? 
+    1 dp_vs_proto_tcp.conn_lookup = tcp_conn_lookup ，如果conn属性redirect有值，peer_cid会被赋值
+    */
     conn = prot->conn_lookup(prot, &iph, mbuf, &dir, false, &drop, &peer_cid);
 
     if (unlikely(drop)) {
+        // conn_lookup通过黑白名单赋值drop
         RTE_LOG(DEBUG, IPVS, "%s: deny ip try to visit.\n", __func__);
         return INET_DROP;
     }
@@ -1002,7 +1017,9 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
     }
 
     if (unlikely(!conn)) {
-        /* try schedule RS and create new connection */
+        /* try schedule RS and create new connection 
+        1.conn_sched = tcp_conn_sched
+        */
         if (prot->conn_sched(prot, &iph, mbuf, &conn, &verdict) != EDPVS_OK) {
             /* RTE_LOG(DEBUG, IPVS, "%s: fail to schedule.\n", __func__); */
             return verdict;
@@ -1091,10 +1108,17 @@ static int __dp_vs_pre_routing(void *priv, struct rte_mbuf *mbuf,
     struct dp_vs_iphdr iph;
     struct dp_vs_service *svc;
 
+    // 将mbuf中ip协议的相关信息填充到iph中
     if (EDPVS_OK != dp_vs_fill_iphdr(af, mbuf, &iph))
         return INET_ACCEPT;
 
-    /* Drop all ip fragment except ospf */
+    /* Drop all ip fragment except ospf 
+    当数据长度超过网络设备的MTU时，一般会发生分片
+    这里丢弃的原因可能是：
+        1. IP分片重组复杂且容易被利用进行攻击（如分片攻击）
+        2. 简化处理流程，提高安全性与效率
+    在 __dp_vs_in 找到一份为什么不处理分片的官方回答
+    */
     if ((af == AF_INET) && ip4_is_frag(ip4_hdr(mbuf))) {
         dp_vs_estats_inc(DEFENCE_IP_FRAG_DROP);
         return INET_DROP;
@@ -1223,6 +1247,7 @@ int dp_vs_init(void)
         goto err_stats;
     }
 
+    //  向 &inet_hooks 注册hook函数
     err = inet_register_hooks(dp_vs_ops, NELEMS(dp_vs_ops));
     if (err != EDPVS_OK) {
         RTE_LOG(ERR, IPVS, "fail to register hooks: %s\n", dpvs_strerror(err));

@@ -408,7 +408,7 @@ syn_proxy_v4_cookie_check(struct rte_mbuf *mbuf, uint32_t cookie,
     const struct iphdr *iph = (struct iphdr*)ip4_hdr(mbuf);
     const struct tcphdr *th = tcp_hdr(mbuf);
 
-    uint32_t seq = ntohl(th->seq) - 1;
+    uint32_t seq = ntohl(th->seq) - 1; // 还原成Syn-proxy step 1第一次syn握手的时候的seq
     uint32_t mssind;
     uint32_t res = check_tcp_syn_cookie(cookie, iph->saddr, iph->daddr,
             th->source, th->dest, seq, rte_atomic32_read(&g_minute_count),
@@ -431,7 +431,7 @@ syn_proxy_v4_cookie_check(struct rte_mbuf *mbuf, uint32_t cookie,
             opt->wscale_ok = 0;
         else
             return 0;
-
+        // 恭喜校验通过
         return 1;
     }
     return 0;
@@ -649,6 +649,20 @@ static void syn_proxy_reuse_mbuf(int af, struct rte_mbuf *mbuf,
         th->window = 0;
     /* set seq(cookie) and ack_seq */
     th->ack_seq = htonl(ntohl(th->seq) + 1);
+    /**
+    在TCP握手过程中，当客户端发送一个SYN包给服务器以发起连接时，服务器会回应一个SYN-ACK包。此时，
+    服务器可能会生成一个Cookie，并将其作为序列号的一部分发送给客户端。这个Cookie通常是一个基于时间戳和其他随机因素计算得出的值，
+    它具有以下特性：
+
+        唯一性：每次生成的Cookie都应该具有唯一性，以确保每个连接请求都是独立且可识别的。
+        安全性：Cookie增加了攻击者预测序列号的难度，从而提高了对SYN泛洪攻击的防御能力。
+        可恢复性：服务器可以根据Cookie恢复出正确的序列号，这在一些场景下是非常有用的，比如在服务器没有立即保存连接状态的情况下。
+            当客户端收到SYN-ACK包后，它会在自己的ACK包中返回这个Cookie（或根据Cookie计算出的序列号）。
+            服务器通过验证客户端返回的Cookie是否正确来决定是否继续完成三次握手过程。
+
+    这种机制常用于负载均衡器或防火墙设备中，这些设备可能需要处理大量的并发连接请求，并且需要快速地处理这些请求而不必立即在服务器端为每个连接分配资源。
+    通过使用Cookie，可以在不保留完整连接状态的情况下安全地完成TCP握手。 
+    */
     th->seq = htonl(isn);
 
     /* exchage addresses */
@@ -720,6 +734,7 @@ int dp_vs_synproxy_syn_rcv(int af, struct rte_mbuf *mbuf,
     struct rte_ether_hdr *eth;
     struct rte_ether_addr ethaddr;
 
+    // 将mbuf原本的IP头裁掉，获得TCP头
     th = mbuf_header_pointer(mbuf, iph->len, sizeof(_tcph), &_tcph);
     if (unlikely(NULL == th))
         goto syn_rcv_out;
@@ -727,6 +742,8 @@ int dp_vs_synproxy_syn_rcv(int af, struct rte_mbuf *mbuf,
     if (th->syn && !th->ack && !th->rst && !th->fin &&
             (svc = dp_vs_service_lookup(af, iph->proto, &iph->daddr, th->dest, 0,
                 NULL, NULL, rte_lcore_id())) && (svc->flags & DP_VS_SVC_F_SYNPROXY)) {
+        /*此判断表明该报文为syn报文，而且服务配置开启了synproxy，则进入此分支*/
+
         /* if service's weight is zero (non-active realserver),
          * do noting and drop the packet */
         if (svc->weight == 0) {
@@ -747,6 +764,7 @@ int dp_vs_synproxy_syn_rcv(int af, struct rte_mbuf *mbuf,
     } else {
         return 1;
     }
+    /* 走到这里表明mbuf是syn包，而且通过了上面黑白名单的校验，需要实行synproxy处理 */
 
     /* mbuf will be reused and ether header will be set.
      * FIXME: to support non-ether packets. */
@@ -765,13 +783,18 @@ int dp_vs_synproxy_syn_rcv(int af, struct rte_mbuf *mbuf,
         goto syn_rcv_out;
     }
     if (likely(dev && (dev->flag & NETIF_PORT_FLAG_TX_TCP_CSUM_OFFLOAD))) {
+        // 检查设备是否支持tcp校验和验证，如果支持，则设置mbuf的offload标志，以启用相应的功能
+        // 假如不支持offload，在哪里设置这个校验和？在下面的 syn_proxy_reuse_mbuf 中
         if (af == AF_INET)
             mbuf->ol_flags |= (PKT_TX_TCP_CKSUM | PKT_TX_IP_CKSUM | PKT_TX_IPV4);
         else
+            // ipv6协议没有校验和，所以不用设置该字段
             mbuf->ol_flags |= (PKT_TX_TCP_CKSUM | PKT_TX_IPV6);
     }
 
-    /* reuse mbuf */
+    /* reuse mbuf 
+    为了响应客户端的syn报文，需要重新设置报文头，这里设置的是ip头和tcp头
+    */
     syn_proxy_reuse_mbuf(af, mbuf, th, &tcp_opt);
 
     /* set L2 header and send the packet out
@@ -782,10 +805,12 @@ int dp_vs_synproxy_syn_rcv(int af, struct rte_mbuf *mbuf,
         RTE_LOG(ERR, IPVS, "%s: no memory\n", __func__);
         goto syn_rcv_out;
     }
+    // 将目的mac和源mac地址交换
     memcpy(&ethaddr, &eth->s_addr, sizeof(struct rte_ether_addr));
     memcpy(&eth->s_addr, &eth->d_addr, sizeof(struct rte_ether_addr));
     memcpy(&eth->d_addr, &ethaddr, sizeof(struct rte_ether_addr));
 
+    // 将mbuf塞到发送队列
     if (unlikely(EDPVS_OK != (ret = netif_xmit(mbuf, dev)))) {
         RTE_LOG(ERR, IPVS, "%s: netif_xmit failed -- %s\n",
                 __func__, dpvs_strerror(ret));
@@ -803,12 +828,16 @@ syn_rcv_out:
     return 0;
 }
 
-/* Check if mbuf has user data */
+/* Check if mbuf has user data 
+return 1 if has data, return 0 if no data
+*/
 static inline int syn_proxy_ack_has_data(struct rte_mbuf *mbuf,
         const struct dp_vs_iphdr *iph, struct tcphdr *th)
 {
     RTE_LOG(DEBUG, IPVS, "%s: tot_len = %u, iph_len = %u, tcph_len = %u\n",
             __func__, mbuf->pkt_len, iph->len, th->doff * 4);
+    // tcphdr 的 doff 字段表示tcp报文头长度，单位为4字节，所以要乘以4，
+    // 这里的pkt_len是已经去除了以太帧头长度，所以减去IP头和TCP头长度，就是用户数据的长度
     return (mbuf->pkt_len - iph->len - th->doff * 4) != 0;
 }
 
@@ -975,7 +1004,9 @@ static int syn_proxy_send_rs_syn(int af, const struct tcphdr *th,
     /* Count in the syn packet */
     dp_vs_stats_in(cp, mbuf);
 
-    /* If xmit failed, syn_mbuf will be freed correctly */
+    /* If xmit failed, syn_mbuf will be freed correctly 
+    在这里按照配置的转发模式（fullNat等）将数据发送出去
+    */
     cp->packet_xmit(pp, cp, syn_mbuf);
 
     return EDPVS_OK;
@@ -1176,18 +1207,25 @@ int dp_vs_synproxy_ack_rcv(int af, struct rte_mbuf *mbuf,
 
     /* Do not check svc syn-proxy flag, as it may be changed after syn-proxy step 1. */
     if (!th->syn && th->ack && !th->rst && !th->fin &&
-            (svc = dp_vs_service_lookup(af, iph->proto, &iph->daddr,
+            (svc = dp_vs_service_lookup(af,iph->proto, &iph->daddr,
                            th->dest, 0, NULL, NULL, rte_lcore_id()))) {
         if (dp_vs_synproxy_ctrl_defer &&
                 !syn_proxy_ack_has_data(mbuf, iph, th)) {
+            // dp_vs_synproxy_ctrl_defer初始化为1
             /* Update statistics */
             dp_vs_estats_inc(SYNPROXY_NULL_ACK);
             /* We get a pure ack when expecting ack packet with payload, so
              * have to drop it */
             *verdict = INET_DROP;
+            /**
+            如果收到一个pure的ack包的时候，为什么这里要把他丢弃？
+            1. 在正常情况下，客户端的ACK包应包含数据负载。
+            2. 如果收到一个纯ACK包（没有数据负载），则认为这是异常情况，选择丢弃该包以避免潜在的状态混乱和资源浪费。
+             */
             return 0;
         }
 
+        // ntohl(th->ack_seq) - 1 就是当初Syn-proxy step 1里面第二次握手包里设置的seq
         if (AF_INET6 == af)
             res_cookie_check = syn_proxy_v6_cookie_check(mbuf,
                     ntohl(th->ack_seq) - 1, &opt);
@@ -1200,6 +1238,7 @@ int dp_vs_synproxy_ack_rcv(int af, struct rte_mbuf *mbuf,
             /* Cookie check failed, drop the packet */
             RTE_LOG(DEBUG, IPVS, "%s: syn_cookie check failed seq=%u\n", __func__,
                     ntohl(th->ack_seq) - 1);
+            // 向client发送rst包，告知连接不可用
             if (EDPVS_OK == syn_proxy_send_tcp_rst(af, mbuf)) {
                 *verdict = INET_STOLEN;
             } else {
@@ -1208,6 +1247,7 @@ int dp_vs_synproxy_ack_rcv(int af, struct rte_mbuf *mbuf,
             return 0;
         }
 
+        // 走到这里，说明了client的第三次握手包验证通过，连接是可以建立的了，synproxy出色的完成了它的工作
         /* Update statistics */
         dp_vs_estats_inc(SYNPROXY_OK_ACK);
 

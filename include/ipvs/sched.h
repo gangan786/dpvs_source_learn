@@ -27,7 +27,14 @@ struct dp_vs_iphdr;
 struct dp_vs_scheduler {
     struct list_head    n_list;
     char                *name;
-
+    /**
+    dp_vs_conhash_schedule
+    dp_vs_fo_schedule
+    dp_vs_mh_schedule
+    dp_vs_rr_schedule
+    dp_vs_wlc_schedule
+    dp_vs_wrr_schedule
+     */
     struct dp_vs_dest *
         (*schedule)(struct dp_vs_service *svc,
                     const struct rte_mbuf *mbuf, const struct dp_vs_iphdr *iph);

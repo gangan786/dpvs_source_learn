@@ -50,6 +50,8 @@ void *mbuf_userdata_const(const struct rte_mbuf *mbuf, mbuf_usedata_field_t fiel
  *
  * it expands heading mbuf, moving it's tail forward and copying necessary
  * data from segments part.
+ 
+ 此函数仅调整mbuf结构，不改变其内部实际数据内容。
  *
  */
 int mbuf_may_pull(struct rte_mbuf *mbuf, unsigned int len)

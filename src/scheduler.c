@@ -22,6 +22,15 @@
 
 /* Note: lockless, lcore_job can only be register on initialization stage and
  *       unregistered on cleanup stage.
+    &reload_job, LCORE_ROLE_MASTER
+    &msg_master_job, LCORE_ROLE_MASTER
+    &msg_slave_job, LCORE_ROLE_FWD_WORKER
+    &msg_master_job, LCORE_ROLE_MASTER
+    &iftraf_job, LCORE_ROLE_MASTER
+    &frag_job, LCORE_ROLE_FWD_WORKER
+    &neigh_jobs[i].job,neigh_jobs[i].role
+    &netif_jobs[i].job, netif_jobs[i].role
+    &qsch_sched_job, LCORE_ROLE_FWD_WORKER
  */
 static struct list_head dpvs_lcore_jobs[LCORE_ROLE_MAX][LCORE_JOB_TYPE_MAX];
 
@@ -77,6 +86,18 @@ void dpvs_lcore_job_init(struct dpvs_lcore_job *job, char *name,
     snprintf(job->name, sizeof(job->name) - 1, "%s", name);
 }
 
+/*
+注册job任务
+重新加载配置信息：&reload_job, LCORE_ROLE_MASTER
+&msg_master_job, LCORE_ROLE_MASTER
+&msg_slave_job, LCORE_ROLE_FWD_WORKER
+&msg_master_job, LCORE_ROLE_MASTER
+&iftraf_job, LCORE_ROLE_MASTER
+&frag_job, LCORE_ROLE_FWD_WORKER
+&neigh_jobs[i].job,neigh_jobs[i].role
+&netif_jobs[i].job, netif_jobs[i].role
+&qsch_sched_job, LCORE_ROLE_FWD_WORKER
+*/
 int dpvs_lcore_job_register(struct dpvs_lcore_job *lcore_job, dpvs_lcore_role_t role)
 {
     struct dpvs_lcore_job *cur;

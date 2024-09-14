@@ -32,6 +32,7 @@
 #define INET
 #define RTE_LOGTYPE_INET RTE_LOGTYPE_USER1
 
+// 在这里完成hook函数注册：/src/ipvs/ip_vs_core.c#dp_vs_init->inet_register_hooks dp_vs_ops
 static struct list_head inet_hooks[INET_HOOK_NUMHOOKS];
 static rte_rwlock_t inet_hook_lock;
 
@@ -214,6 +215,7 @@ static int __inet_register_hooks(struct list_head *head,
     }
 
     list_for_each_entry(elem, head, list) {
+        // 按照priority 从小到大排序
         if (reg->priority < elem->priority)
             break;
     }
@@ -240,6 +242,10 @@ int INET_HOOK(int af, unsigned int hook, struct rte_mbuf *mbuf,
         verdict = INET_ACCEPT;
         list_for_each_entry_continue(ops, hook_list, list) {
 repeat:
+            /*
+             对于af=AF_INET、hook=INET_HOOK_PRE_ROUTING来说
+             ops->hook()有两个实现方法，循环会依次调用 -> dp_vs_pre_routing  dp_vs_in
+             */
             verdict = ops->hook(ops->priv, mbuf, &state);
             if (verdict != INET_ACCEPT) {
                 if (verdict == INET_REPEAT)

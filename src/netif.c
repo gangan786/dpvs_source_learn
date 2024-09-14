@@ -75,6 +75,7 @@ int netif_pktpool_mbuf_cache = NETIF_PKTPOOL_MBUF_CACHE_DEF;
 
 /* physical nic id = phy_pid_base + index */
 static portid_t phy_pid_base = 0;
+/* 在 netif_vdevs_add 初始化值为 dpvs_rte_eth_dev_count() */
 static portid_t phy_pid_end = -1; // not inclusive
 /* bond device id = bond_pid_base + index */
 static portid_t bond_pid_base = -1;
@@ -160,6 +161,8 @@ static struct list_head port_ntab[NETIF_PORT_TABLE_BUCKETS]; /* hashed by name *
 /* function declarations */
 static void kni_lcore_loop(void *dummy);
 
+/**
+通过统计设备数id（rte_eth_dev_count_avail），确定范围 */
 static inline bool is_physical_port(portid_t pid)
 {
     return pid >= phy_pid_base && pid < phy_pid_end;
@@ -1074,6 +1077,9 @@ static inline void netif_pktmbuf_pool_init(void)
 #define NETIF_PKT_TYPE_TABLE_MASK (NETIF_PKT_TYPE_TABLE_BUCKETS - 1)
 /* Note: Lockless. pkt_type can only be registered on initialization stage,
  *       and unregistered on cleanup stage. Otherwise uncertain behavior may arise.
+    &ip4_pkt_type
+    &ip6_pkt_type
+    &arp_pkt_type
  */
 static struct list_head pkt_type_tab[NETIF_PKT_TYPE_TABLE_BUCKETS];
 
@@ -1089,6 +1095,12 @@ static inline void netif_pkt_type_tab_init(void)
         INIT_LIST_HEAD(&pkt_type_tab[i]);
 }
 
+/*
+有以下注册的协议处理函数：
+&ip4_pkt_type
+&ip6_pkt_type
+&arp_pkt_type
+*/
 int netif_register_pkt(struct pkt_type *pt)
 {
     struct pkt_type *cur;
@@ -1779,6 +1791,7 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
         /* Shoul we integrate statistics of isolated recieve lcore into packet
          * processing lcore ? No! we just leave the work to tools */
     } else {
+        // 将读取的数据放到缓存队列中
         nrx = rte_eth_rx_burst(pid, qconf->id, qconf->mbufs, NETIF_MAX_PKT_BURST);
     }
 
@@ -2093,6 +2106,9 @@ static int netif_print_isol_lcore_conf(lcoreid_t cid, char *buf, int *len, bool 
     return EDPVS_OK;
 }
 
+/*
+* 将发送缓存队列里面的数据发送出去
+*/
 static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
 {
     int ntx;
@@ -2108,6 +2124,7 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
 
     dev = netif_port_get(pid);
     if (dev && (dev->flag & NETIF_PORT_FLAG_FORWARD2KNI)) {
+        // dev端口配置了kni转发
         for (; i < txq->len; i++) {
             if (NULL == (mbuf_copied = mbuf_copy(txq->mbufs[i],
                 pktmbuf_pool[dev->socket])))
@@ -2116,7 +2133,7 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
                 kni_ingress(mbuf_copied, dev);
         }
     }
-
+    // 大结局，调用dpdk数据发送接口
     ntx = rte_eth_tx_burst(pid, txq->id, txq->mbufs, txq->len);
     lcore_stats[cid].opackets += ntx;
     /* do not calculate obytes here in consideration of efficency */
@@ -2232,7 +2249,7 @@ int netif_hard_xmit(struct rte_mbuf *mbuf, struct netif_port *dev)
             rte_pktmbuf_free(mbuf);
         return EDPVS_INVAL;
     }
-
+    // 当dev是physical_port时，netif_ops是 dpdk_netif_ops
     ops = dev->netif_ops;
     if (ops && ops->op_xmit)
         return ops->op_xmit(mbuf, dev);
@@ -2278,6 +2295,7 @@ int netif_hard_xmit(struct rte_mbuf *mbuf, struct netif_port *dev)
 
     /* port id is determined by routing */
     pid = dev->id;
+    // 通过lcore_id找到core管理下的所有port，再通过pid找到具体的port，最后获取port里面配置的发送队列条数
     ntxq = lcore_conf[lcore2index[cid]].pqs[port2index[cid][pid]].ntxq;
     if (unlikely(ntxq <= 0)) {
         RTE_LOG(WARNING, NETIF, "%s: no txq on device %s, drop the sending packet\n", __func__, dev->name);
@@ -2285,18 +2303,21 @@ int netif_hard_xmit(struct rte_mbuf *mbuf, struct netif_port *dev)
         lcore_stats[cid].dropped++;
         return EDPVS_RESOURCE;
     }
-    /* qindex is hashed by physical address of mbuf */
+    /* qindex is hashed by memory physical address of mbuf */
     qindex = (((uint32_t) mbuf->buf_iova) >> 8) % ntxq;
     //RTE_LOG(DEBUG, NETIF, "tx-queue hash(%x) = %d\n", ((uint32_t)mbuf->buf_iova) >> 8, qindex);
+    // 获取发送队列
     txq = &lcore_conf[lcore2index[cid]].pqs[port2index[cid][pid]].txqs[qindex];
 
-    /* No space left in txq mbufs, transmit cached mbufs immediately */
+    /* 发送缓存队列已满，需要立即发送已有数据清空缓存 
+    No space left in txq mbufs, transmit cached mbufs immediately */
     if (unlikely(txq->len == NETIF_MAX_PKT_BURST)) {
         netif_tx_burst(cid, pid, qindex);
         txq->len = 0;
     }
 
     lcore_stats[cid].obytes += mbuf->pkt_len;
+    // 将数据放入发送缓存队列中
     txq->mbufs[txq->len] = mbuf;
     txq->len++;
 
@@ -2319,11 +2340,12 @@ int netif_xmit(struct rte_mbuf *mbuf, struct netif_port *dev)
     if (mbuf->port != dev->id)
         mbuf->port = dev->id;
 
-    /* assert for possible double free */
+    /* assert for possible double free 检查引用计数是否合理区间*/
     mbuf_refcnt = rte_mbuf_refcnt_read(mbuf);
     assert((mbuf_refcnt >= 1) && (mbuf_refcnt <= 64));
 
     if (dev->flag & NETIF_PORT_FLAG_TC_EGRESS) {
+        // 端口设备开启了traffic control，则调用tc_hook，详情配置查看：dpvs/doc/tc.md
         mbuf = tc_hook(netif_tc(dev), mbuf, TC_HOOK_EGRESS, &ret);
         if (!mbuf)
             return ret;
@@ -2389,6 +2411,7 @@ static int netif_deliver_mbuf(struct netif_port *dev, lcoreid_t cid,
     }
 
     if (!pkts_from_ring && (dev->flag & NETIF_PORT_FLAG_TC_INGRESS)) {
+        // 处理入站方向的traffic control
         mbuf = tc_hook(netif_tc(dev), mbuf, TC_HOOK_INGRESS, &ret);
         if (!mbuf)
             return ret;
@@ -2445,17 +2468,22 @@ int netif_rcv_mbuf(struct netif_port *dev, lcoreid_t cid, struct rte_mbuf *mbuf,
 
         arp = rte_pktmbuf_mtod_offset(mbuf, struct rte_arp_hdr *, sizeof(struct rte_ether_hdr));
         if (rte_be_to_cpu_16(arp->arp_opcode) == RTE_ARP_OP_REPLY) {
+            // 收到arp协议的回复：RTE_ARP_OP_REPLY
             for (i = 0; i < DPVS_MAX_LCORE; i++) {
-                if ((i == cid) || (!is_lcore_id_fwd(i))
-                     || (i == rte_get_main_lcore()))
-                    continue;
-                /* rte_pktmbuf_clone will not clone pkt.data, just copy pointer! */
-                mbuf_clone = rte_pktmbuf_clone(mbuf, pktmbuf_pool[rte_socket_id()]);
-                if (unlikely(!mbuf_clone)) {
-                    RTE_LOG(WARNING, NETIF, "%s arp reply mbuf clone failed on lcore %d\n",
-                            __func__, i);
-                    continue;
+              if ((i == cid) || (!is_lcore_id_fwd(i)) ||
+                  (i == rte_get_main_lcore()))
+                continue;
+              /* rte_pktmbuf_clone will not clone pkt.data, just copy pointer!
+               */
+              mbuf_clone =
+                  rte_pktmbuf_clone(mbuf, pktmbuf_pool[rte_socket_id()]);
+              if (unlikely(!mbuf_clone)) {
+                RTE_LOG(WARNING, NETIF,
+                        "%s arp reply mbuf clone failed on lcore %d\n",
+                        __func__, i);
+                continue;
                 }
+                // 将arp协议的数据包放进每个lcore的arp_ring中
                 err = rte_ring_enqueue(arp_ring[i], mbuf_clone);
                 if (unlikely(-EDQUOT == err)) {
                     RTE_LOG(WARNING, NETIF, "%s: arp ring of lcore %d quota exceeded\n",
@@ -2476,9 +2504,16 @@ int netif_rcv_mbuf(struct netif_port *dev, lcoreid_t cid, struct rte_mbuf *mbuf,
     if (unlikely(NULL == rte_pktmbuf_adj(mbuf, sizeof(struct rte_ether_hdr))))
         goto drop;
 
+    /* 
+    针对不同的ether_type（0x0800：IPv4、0x0806：ARP、0x86DD：IPv6）调用不同的处理函数
+    &ip4_pkt_type.func = ipv4_rcv
+    &ip6_pkt_type.func = ip6_rcv
+    &arp_pkt_type.func = neigh_resolve_input
+    */
     err = pt->func(mbuf, dev);
 
     if (err == EDPVS_KNICONTINUE) {
+        // pt处理以后，发现需要KNI处理，例如ospf协议包
         if (pkts_from_ring || forward2kni)
             goto drop;
         if (unlikely(NULL == rte_pktmbuf_prepend(mbuf, (mbuf->data_off - data_off))))
@@ -2580,16 +2615,19 @@ static void lcore_job_recv_fwd(void *arg)
     assert(LCORE_ID_ANY != cid);
 
     for (i = 0; i < lcore_conf[lcore2index[cid]].nports; i++) {
+        // 遍历当前lcore的nic端口
         pid = lcore_conf[lcore2index[cid]].pqs[i].id;
         assert(pid <= bond_pid_end);
 
         for (j = 0; j < lcore_conf[lcore2index[cid]].pqs[i].nrxq; j++) {
+            // 遍历当前nic端口对应的rx队列
             qconf = &lcore_conf[lcore2index[cid]].pqs[i].rxqs[j];
 
             lcore_process_arp_ring(cid);
             lcore_process_redirect_ring(cid);
+            // 从nic的rx队列中取出数据包
             qconf->len = netif_rx_burst(pid, qconf);
-
+            // 记录lcore的收包统计信息
             lcore_stats_burst(&lcore_stats[cid], qconf->len);
 
             lcore_process_packets(qconf->mbufs, cid, qconf->len, 0);
@@ -2597,6 +2635,10 @@ static void lcore_job_recv_fwd(void *arg)
     }
 }
 
+/**
+遍历lcore的nic端口，将nic的tx队列中的数据包发送出去
+可以说他是掌管数据发送的关键执行者
+ */
 static void lcore_job_xmit(void *args)
 {
     int i, j;
@@ -2644,14 +2686,14 @@ static struct dpvs_lcore_job_array netif_jobs[NETIF_JOB_MAX] = {
         .role = LCORE_ROLE_FWD_WORKER,
         .job.name = "recv_fwd",
         .job.type = LCORE_JOB_LOOP,
-        .job.func = lcore_job_recv_fwd,
+        .job.func = lcore_job_recv_fwd, // 负责从网口接受数据
     },
 
     [1] = {
         .role = LCORE_ROLE_FWD_WORKER,
         .job.name = "xmit",
         .job.type = LCORE_JOB_LOOP,
-        .job.func = lcore_job_xmit,
+        .job.func = lcore_job_xmit, // 负责从网口发送数据
     },
 
     [2] = {
