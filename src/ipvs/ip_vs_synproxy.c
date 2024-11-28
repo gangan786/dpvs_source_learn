@@ -1211,7 +1211,7 @@ int dp_vs_synproxy_ack_rcv(int af, struct rte_mbuf *mbuf,
                            th->dest, 0, NULL, NULL, rte_lcore_id()))) {
         if (dp_vs_synproxy_ctrl_defer &&
                 !syn_proxy_ack_has_data(mbuf, iph, th)) {
-            // dp_vs_synproxy_ctrl_defer初始化为1
+            // dp_vs_synproxy_ctrl_defer初始化为0
             /* Update statistics */
             dp_vs_estats_inc(SYNPROXY_NULL_ACK);
             /* We get a pure ack when expecting ack packet with payload, so

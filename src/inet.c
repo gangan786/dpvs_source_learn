@@ -231,7 +231,7 @@ int INET_HOOK(int af, unsigned int hook, struct rte_mbuf *mbuf,
     struct list_head *hook_list;
     struct inet_hook_ops *ops;
     struct inet_hook_state state;
-    int verdict = INET_ACCEPT;
+    int verdict = INET_ACCEPT; // INET_ACCEPT表示mbuf符合要求已被处理
 
     state.hook = hook;
     hook_list = af_inet_hooks(af, hook);
@@ -243,8 +243,10 @@ int INET_HOOK(int af, unsigned int hook, struct rte_mbuf *mbuf,
         list_for_each_entry_continue(ops, hook_list, list) {
 repeat:
             /*
-             对于af=AF_INET、hook=INET_HOOK_PRE_ROUTING来说
+            ops的值有: dp_vs_ops
+             对于ipv4协议：af=AF_INET、路由转发前：hook=INET_HOOK_PRE_ROUTING 来说
              ops->hook()有两个实现方法，循环会依次调用 -> dp_vs_pre_routing  dp_vs_in
+             
              */
             verdict = ops->hook(ops->priv, mbuf, &state);
             if (verdict != INET_ACCEPT) {

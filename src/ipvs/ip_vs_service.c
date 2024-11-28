@@ -43,8 +43,8 @@ static rte_atomic16_t dp_vs_num_services[DPVS_MAX_LCORE];
  * hash table for svc
  */
 #define DP_VS_SVC_TAB_BITS 8
-#define DP_VS_SVC_TAB_SIZE (1 << DP_VS_SVC_TAB_BITS)
-#define DP_VS_SVC_TAB_MASK (DP_VS_SVC_TAB_SIZE - 1)
+#define DP_VS_SVC_TAB_SIZE (1 << DP_VS_SVC_TAB_BITS) // 1 0000 0000
+#define DP_VS_SVC_TAB_MASK (DP_VS_SVC_TAB_SIZE - 1) // 1111 1111 = 255
 
 static struct list_head dp_vs_svc_table[DPVS_MAX_LCORE][DP_VS_SVC_TAB_SIZE];
 

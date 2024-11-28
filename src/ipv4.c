@@ -389,6 +389,7 @@ static int ipv4_rcv(struct rte_mbuf *mbuf, struct netif_port *port)
     }
 
     IP4_UPD_PO_STATS(in, mbuf->pkt_len);
+    // 将数据放到iftraf_ring中，由 iftraf_job 处理，实现流量统计
     iftraf_pkt_in(AF_INET, mbuf, port);
     if (mbuf_may_pull(mbuf, sizeof(struct rte_ipv4_hdr)) != 0)
         goto inhdr_error;

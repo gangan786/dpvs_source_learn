@@ -66,7 +66,7 @@ else
 	CFLAGS += -rdynamic
 endif
 
-
+ 
 CFLAGS += $(INCDIRS)
 
 OBJS := $(shell find $(SRCDIR) -name '*.c' | sort)

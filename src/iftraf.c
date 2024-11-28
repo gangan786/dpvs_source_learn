@@ -508,6 +508,7 @@ static void inline iftraf_tlb_add(struct iftraf_pkt *param)
     }
 
     /* Update record */
+    // 统计出入站流量信息
     entry->last_write = history_pos;
     if (param->dir == IFTRAF_PKT_DIR_IN) {
         entry->recv[history_pos] += param->pkt_len;
@@ -609,6 +610,7 @@ static void inline iftraf_iftlb_add(struct iftraf_pkt *param)
     }
 
     /* Update record */
+    // 统计出入站流量信息
     entry->last_write = history_pos;
     if (param->dir == IFTRAF_PKT_DIR_IN) {
         entry->recv[history_pos] += param->pkt_len;

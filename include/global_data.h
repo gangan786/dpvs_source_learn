@@ -26,12 +26,12 @@ RTE_DECLARE_PER_LCORE(uint32_t, g_dpvs_poll_tick);
 #define this_poll_tick (RTE_PER_LCORE(g_dpvs_poll_tick))
 
 typedef enum dpvs_lcore_role_type {
-    LCORE_ROLE_IDLE,
+    LCORE_ROLE_IDLE, // 无效状态
     LCORE_ROLE_MASTER,
     LCORE_ROLE_FWD_WORKER,
     LCORE_ROLE_ISOLRX_WORKER,
     LCORE_ROLE_KNI_WORKER,
-    LCORE_ROLE_MAX
+    LCORE_ROLE_MAX // 无效状态
 } dpvs_lcore_role_t;
 
 extern uint64_t g_cycles_per_sec;

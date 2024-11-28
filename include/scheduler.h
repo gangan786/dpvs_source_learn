@@ -33,7 +33,7 @@ typedef enum dpvs_lcore_job_type {
     LCORE_JOB_INIT,
     LCORE_JOB_LOOP,
     LCORE_JOB_SLOW,
-    LCORE_JOB_TYPE_MAX
+    LCORE_JOB_TYPE_MAX // 无效状态
 } dpvs_lcore_job_t;
 
 typedef void (*job_pt)(void *arg);

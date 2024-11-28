@@ -52,7 +52,9 @@ static int conn_pool_cache = DPVS_CONN_CACHE_SIZE_DEF;
 #define DPVS_CONN_INIT_TIMEOUT_DEF  3   /* sec */
 static int conn_init_timeout = DPVS_CONN_INIT_TIMEOUT_DEF;
 
-/* helpers */
+/* helpers 
+dp_vs_conn_tbl 是在 RTE_DEFINE_PER_LCORE 这里定义变量的
+*/
 #define this_conn_tbl               (RTE_PER_LCORE(dp_vs_conn_tbl))
 #ifdef CONFIG_DPVS_IPVS_CONN_LOCK
 #define this_conn_lock              (RTE_PER_LCORE(dp_vs_conn_lock))
@@ -67,6 +69,8 @@ bool dp_vs_redirect_disable = true;
 
 /*
  * per-lcore dp_vs_conn{} hash table.
+ 定义dp_vs_conn_tbl
+ static __thread list_head * per_lcore_dp_vs_conn_tbl;
  */
 static RTE_DEFINE_PER_LCORE(struct list_head *, dp_vs_conn_tbl);
 #ifdef CONFIG_DPVS_IPVS_CONN_LOCK
@@ -79,7 +83,7 @@ static rte_spinlock_t dp_vs_ct_lock;
 
 static RTE_DEFINE_PER_LCORE(uint32_t, dp_vs_conn_count);
 
-static uint32_t dp_vs_conn_rnd; /* hash random */
+static uint32_t dp_vs_conn_rnd; /* hash random 是系统初始化（dp_vs_conn_init）的时候产生随机数*/
 
 /*
  * memory pool for dp_vs_conn{}
@@ -209,6 +213,7 @@ inline uint32_t dp_vs_conn_hashkey(int af,
     const union inet_addr *daddr, uint16_t dport,
     uint32_t mask)
 {
+    // 根据不同的IP协议，选择不同的hash生成算法
     switch (af) {
     case AF_INET:
         return rte_jhash_3words((uint32_t)saddr->in.s_addr,
@@ -219,7 +224,7 @@ inline uint32_t dp_vs_conn_hashkey(int af,
     case AF_INET6:
         {
             uint32_t vect[9];
-
+            // 128/32=4   16*8=128  用数组的四个uint32_t存储ipv6的128位地址
             vect[0] = ((uint32_t)sport) << 16 | (uint32_t)dport;
             memcpy(&vect[1], &saddr->in6, 16);
             memcpy(&vect[5], &daddr->in6, 16);
@@ -244,7 +249,7 @@ static inline int __dp_vs_conn_hash(struct dp_vs_conn *conn, uint32_t mask)
                          &tuplehash_in(conn).saddr, tuplehash_in(conn).sport,
                          &tuplehash_in(conn).daddr, tuplehash_in(conn).dport,
                          mask);
-
+    // 因为在构建conn的时候已经把tuplehash_out的sport和dport反过来，所以这里不用再反过来
     ohash = dp_vs_conn_hashkey(tuplehash_out(conn).af,
                          &tuplehash_out(conn).saddr, tuplehash_out(conn).sport,
                          &tuplehash_out(conn).daddr, tuplehash_out(conn).dport,
@@ -278,13 +283,13 @@ static inline int dp_vs_conn_hash(struct dp_vs_conn *conn)
 #ifdef CONFIG_DPVS_IPVS_CONN_LOCK
     rte_spinlock_lock(&this_conn_lock);
 #endif
-
+    // 将conn的tuplehash加入 this_conn_tbl
     err = __dp_vs_conn_hash(conn, DPVS_CONN_TBL_MASK);
 
 #ifdef CONFIG_DPVS_IPVS_CONN_LOCK
     rte_spinlock_unlock(&this_conn_lock);
 #endif
-
+    // 将conn加入 dp_vs_cr_tbl
     dp_vs_redirect_hash(conn);
 
     return err;
@@ -359,8 +364,10 @@ static int dp_vs_conn_bind_dest(struct dp_vs_conn *conn,
     if (dp_vs_conn_is_template(conn))
         rte_atomic32_inc(&dest->persistconns);
     else
+        // 此时conn还在初始化中，所以当前conn应该计数到非活跃的范围：inactconns
         rte_atomic32_inc(&dest->inactconns);
 
+    // 根据不同的转发模式，选择不同的转发函数
     switch (dest->fwdmode) {
     case DPVS_FWD_MODE_NAT:
         conn->packet_xmit = dp_vs_xmit_nat;
@@ -814,6 +821,7 @@ struct dp_vs_conn *dp_vs_conn_new(struct rte_mbuf *mbuf,
 
     assert(mbuf && param && dest);
 
+    // 分配内存，并设置conn的redirect、connpool属性
     new = dp_vs_conn_alloc(dest->fwdmode, flags);
     if (unlikely(!new))
         return NULL;
@@ -878,7 +886,7 @@ struct dp_vs_conn *dp_vs_conn_new(struct rte_mbuf *mbuf,
         new->daddr  = iph->saddr;
     else
         new->daddr  = dest->addr;
-    new->dport  = rport;
+    new->dport  = rport; // 1.DPVS_FWD_MODE_FNAT: rport = dest->port
 
     if (dest->fwdmode == DPVS_FWD_MODE_FNAT) {
         new->pp_version = dest->svc->proxy_protocol;
@@ -923,6 +931,7 @@ struct dp_vs_conn *dp_vs_conn_new(struct rte_mbuf *mbuf,
 
     /* FNAT only: select and bind local address/port */
     if (dest->fwdmode == DPVS_FWD_MODE_FNAT) {
+        // 在fullNat模式下，完成localPort的设置，实现两个方向的数据包都能被同一个core处理
         if ((err = dp_vs_laddr_bind(new, dest->svc)) != EDPVS_OK)
             goto unbind_dest;
     }
@@ -930,7 +939,9 @@ struct dp_vs_conn *dp_vs_conn_new(struct rte_mbuf *mbuf,
     /* init redirect if it exists */
     dp_vs_redirect_init(new);
 
-    /* add to hash table (dual dir for each bucket) */
+    /* add to hash table (dual dir for each bucket) 
+    将fullNat模式下重新设置localIP和localPort的conn重新放到hash表: this_conn_tbl，这样当回程数据到来的时候才能找到对应的conn
+    */
     if ((err = dp_vs_conn_hash(new)) != EDPVS_OK)
         goto unbind_laddr;
 

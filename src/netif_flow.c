@@ -73,6 +73,7 @@ static inline int __netif_flow_create(struct netif_port *dev,
 
     if (unlikely(!flow || !dev || (dev->type != PORT_TYPE_GENERAL &&
                 dev->type != PORT_TYPE_BOND_SLAVE)))
+        // 只对一般物理网卡有效
         return EDPVS_INVAL;
 
     netif_flow_lock(dev);
@@ -146,6 +147,7 @@ static int netif_flow_create(struct netif_port *dev,
     }
 
     if (dev->type == PORT_TYPE_GENERAL) {
+        // 对普通网卡设备做flow设置
         if (unlikely(flows->size < 1 || !flows->handlers))
             return EDPVS_INVAL;
         err = __netif_flow_create(dev, attr, pattern, actions, &flows->handlers[0]);
@@ -153,13 +155,19 @@ static int netif_flow_create(struct netif_port *dev,
         return err;
     }
 
+    /*
+    为什么dev->type 有PORT_TYPE_BOND_MASTER和PORT_TYPE_BOND_SLAVE的分别?
+    answer: relate_bonding_device
+    */ 
     if (dev->type == PORT_TYPE_BOND_MASTER) {
+        // 对bonding聚合网卡做flow设置
         int i, slave_nb;
         slave_nb = dev->bond->master.slave_nb;
 
         if (unlikely(flows->size < slave_nb || !flows->handlers))
             return EDPVS_INVAL;
         for (i = 0; i < slave_nb; i++) {
+            // 对bonding接口做flow，本质上是对普通网卡做flow
             err = __netif_flow_create(dev->bond->master.slaves[i], attr, pattern, actions, &flows->handlers[i]);
             if (err != EDPVS_OK) {
                 while (--i >= 0)
@@ -270,8 +278,8 @@ int netif_sapool_flow_add(struct netif_port *dev, lcoreid_t cid,
     struct rte_flow_attr attr = {
         .group    = NETIF_FLOW_GROUP,
         .priority = NETIF_FLOW_PRIO_SAPOOL,
-        .ingress  = 1,
-        .egress   = 0,
+        .ingress  = 1, // 表示这是一个入站流规则
+        .egress   = 0, // 表示这不是一个出站流规则
         //.transfer = 0,
     };
     struct rte_flow_item pattern[SAPOOL_PATTERN_NUM];
@@ -294,25 +302,25 @@ int netif_sapool_flow_add(struct netif_port *dev, lcoreid_t cid,
     memset(pattern, 0, sizeof(pattern));
     memset(action, 0, sizeof(action));
 
-    /* create action stack */
+    /* create action stack 获取这个CPU在这个dev网卡上的rx_queue_id */
     err = netif_get_queue(dev, cid, &queue_id);
     if (unlikely(err != EDPVS_OK))
         return err;
     queue.index = queue_id;
-    action[0].type = RTE_FLOW_ACTION_TYPE_QUEUE;
-    action[0].conf = &queue;
+    action[0].type = RTE_FLOW_ACTION_TYPE_QUEUE; // 类型：将数据包分发到指定的队列索引
+    action[0].conf = &queue; // 指定队列索引
     action[1].type = RTE_FLOW_ACTION_TYPE_END;
 
     /* create pattern stack */
-    pattern[0].type = RTE_FLOW_ITEM_TYPE_ETH;
+    pattern[0].type = RTE_FLOW_ITEM_TYPE_ETH; // 匹配以太帧
 
     if (af == AF_INET) {
         memset(&ip_spec, 0, sizeof(struct rte_flow_item_ipv4));
         memset(&ip_mask, 0, sizeof(struct rte_flow_item_ipv4));
-        ip_spec.hdr.dst_addr = addr->in.s_addr;
-        ip_mask.hdr.dst_addr = htonl(0xffffffff);
-        pattern[1].type = RTE_FLOW_ITEM_TYPE_IPV4;
-        pattern[1].spec = &ip_spec;
+        ip_spec.hdr.dst_addr = addr->in.s_addr; // 指定要匹配的具体Ipv4地址
+        ip_mask.hdr.dst_addr = htonl(0xffffffff); // 匹配ipv4的所有位
+        pattern[1].type = RTE_FLOW_ITEM_TYPE_IPV4; // 匹配IPv4数据包
+        pattern[1].spec = &ip_spec; //
         pattern[1].mask = &ip_mask;
     } else if (af == AF_INET6) {
         memset(&ip6_spec, 0, sizeof(struct rte_flow_item_ipv6));
@@ -327,9 +335,9 @@ int netif_sapool_flow_add(struct netif_port *dev, lcoreid_t cid,
     }
     memset(&tcp_spec, 0, sizeof(struct rte_flow_item_tcp));
     memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
-    tcp_spec.hdr.dst_port = port_base;
-    tcp_mask.hdr.dst_port = port_mask;
-    pattern[2].type = RTE_FLOW_ITEM_TYPE_TCP;
+    tcp_spec.hdr.dst_port = port_base; // 指定要匹配的具体端口号
+    tcp_mask.hdr.dst_port = port_mask; // 指定匹配端口号的掩码
+    pattern[2].type = RTE_FLOW_ITEM_TYPE_TCP; // 匹配TCP数据包
     pattern[2].spec = &tcp_spec;
     pattern[2].mask = &tcp_mask;
     pattern[3].type = RTE_FLOW_ITEM_TYPE_END;
@@ -355,9 +363,9 @@ int netif_sapool_flow_add(struct netif_port *dev, lcoreid_t cid,
 
     memset(&udp_spec, 0, sizeof(struct rte_flow_item_udp));
     memset(&udp_mask, 0, sizeof(struct rte_flow_item_udp));
-    udp_spec.hdr.dst_port = port_base;
+    udp_spec.hdr.dst_port = port_base; // 和TCP保持了一样的设置规则
     udp_mask.hdr.dst_port = port_mask;
-    pattern[2].type = RTE_FLOW_ITEM_TYPE_UDP;
+    pattern[2].type = RTE_FLOW_ITEM_TYPE_UDP; // 匹配UDP数据包
     pattern[2].spec = &udp_spec;
     pattern[2].mask = &udp_mask;
     /* set udp flow */

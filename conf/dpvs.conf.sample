@@ -74,6 +74,9 @@ netif_defs {
 !    3. cpu ids identify dpvs workers only, and not correspond to physical cpu cores.
 !       If you are to specify cpu cores on which to run dpvs, please use dpdk eal options,
 !       such as "-c", "-l", "--lcores". Use "dpvs -- --help" for supported eal options.
+!    概述:
+!       1. 从CPU的视角看，一个CPU可以接管多个网卡，但是只能接管网卡中的tx/rx队列各一个
+!       2. 从tx/rx队列的视角看，一个队列只能属于一个CPU
 worker_defs {
     <init> worker cpu0 {
         type    master

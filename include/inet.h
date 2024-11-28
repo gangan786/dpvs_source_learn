@@ -33,7 +33,7 @@
  * Inet Hooks
  */
 enum {
-    INET_HOOK_PRE_ROUTING,
+    INET_HOOK_PRE_ROUTING, // 以 INET_HOOK_* 为下标的数组，用于保存每个阶段需要执行的函数
     INET_HOOK_LOCAL_IN,
     INET_HOOK_FORWARD,
     INET_HOOK_LOCAL_OUT,

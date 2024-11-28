@@ -69,7 +69,7 @@ msg_type_lock_t mt_lock[DPVS_MAX_LCORE];
 #define DPVS_MC_HLIST_MASK (DPVS_MC_HLIST_LEN - 1)
 struct list_head mc_wait_hlist[DPVS_MC_HLIST_LEN];
 
-/* per-lcore msg queue */
+/* per-lcore msg queue 这个ring似乎是用来在各个core传递信息的 */
 struct rte_ring *msg_ring[DPVS_MAX_LCORE];
 
 #ifdef CONFIG_MSG_DEBUG
@@ -735,6 +735,7 @@ int msg_slave_process(int step)
     int ret = EDPVS_OK;
 
     cid = rte_lcore_id();
+    // 这里不处理msg_ring[master_lcore]的信息
     if (unlikely(cid == master_lcore)) {
         RTE_LOG(ERR, MSGMGR, "%s is called on master lcore!\n", __func__);
         return EDPVS_NONEALCORE;
@@ -1438,6 +1439,10 @@ static struct dpvs_lcore_job sockopt_job = {
     .func = sockopt_job_func,
 };
 
+/**
+使用socket domain实现进程间通信，以接受来自控制面的信息，
+并通过 dpvs_lcore_job_register 注册循环任务，以实现实时接收信息。
+ */
 static inline int sockopt_init(void)
 {
     struct sockaddr_un srv_addr;

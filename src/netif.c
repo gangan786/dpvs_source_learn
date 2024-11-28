@@ -73,6 +73,10 @@ int netif_pktpool_mbuf_cache = NETIF_PKTPOOL_MBUF_CACHE_DEF;
 
 #define RETA_CONF_SIZE  (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
 
+/**
+下面两种接口：物理接口、聚合接口，的portid_t范围
+在初始化的时候被设置: netif_vdevs_add
+ */
 /* physical nic id = phy_pid_base + index */
 static portid_t phy_pid_base = 0;
 /* 在 netif_vdevs_add 初始化值为 dpvs_rte_eth_dev_count() */
@@ -143,15 +147,15 @@ struct worker_conf_stream {
     struct list_head worker_list_node;
 };
 
-static struct list_head port_list;      /* device configurations from cfgfile */
-static struct list_head bond_list;      /* bonding configurations from cfgfile */
+static struct list_head port_list;      /* device configurations from cfgfile 保存netif_defs.device配置列表 */
+static struct list_head bond_list;      /* bonding configurations from cfgfile 保存netif_defs.bonding配置列表 */
 static struct list_head worker_list;    /* lcore configurations from cfgfile */
 
 #define NETIF_PORT_TABLE_BITS 8
 #define NETIF_PORT_TABLE_BUCKETS (1 << NETIF_PORT_TABLE_BITS)
 #define NETIF_PORT_TABLE_MASK (NETIF_PORT_TABLE_BUCKETS - 1)
-static struct list_head port_tab[NETIF_PORT_TABLE_BUCKETS]; /* hashed by id */
-static struct list_head port_ntab[NETIF_PORT_TABLE_BUCKETS]; /* hashed by name */
+static struct list_head port_tab[NETIF_PORT_TABLE_BUCKETS]; /* 存储netif_port hashed by id --> netif_port_register */
+static struct list_head port_ntab[NETIF_PORT_TABLE_BUCKETS]; /* 存储netif_port hashed by name --> netif_port_register */
 /* Note: Lockless, NIC can only be registered on initialization stage and
  *       unregistered on cleanup stage
  */
@@ -162,12 +166,16 @@ static struct list_head port_ntab[NETIF_PORT_TABLE_BUCKETS]; /* hashed by name *
 static void kni_lcore_loop(void *dummy);
 
 /**
-通过统计设备数id（rte_eth_dev_count_avail），确定范围 */
+是dpdk脚本添加的网卡设备：dpdk-devbind.py --bind=igb_uio eth1
+*/
 static inline bool is_physical_port(portid_t pid)
 {
     return pid >= phy_pid_base && pid < phy_pid_end;
 }
 
+/**
+是通过rte_eth_bond_create添加的网卡设备
+ */
 static inline bool is_bond_port(portid_t pid)
 {
     return pid >= bond_pid_base && pid < bond_pid_end;
@@ -313,7 +321,7 @@ static void device_handler(vector_t tokens)
     port_cfg->promisc_mode = false;
     port_cfg->allmulticast = false;
     strncpy(port_cfg->rss, "tcp", sizeof(port_cfg->rss));
-
+    // 将初步解析的device配置保存到: port_list
     list_add(&port_cfg->port_list_node, &port_list);
 }
 
@@ -1161,7 +1169,7 @@ static struct netif_lcore_conf lcore_conf[DPVS_MAX_LCORE + 1];
 /* Note: Lockless, lcore_conf is set on initialization stage by cfgfile /etc/dpvs.conf.
 config sample:
 static struct netif_lcore_conf lcore_conf[DPVS_MAX_LCORE + 1] = {
-    {.id = 1, .nports = 2, .pqs = {
+    {.id（表示lcore的cid） = 1, .nports = 2, .pqs = {
         {.id = 0, .nrxq = 1, .ntxq = 1, .rxqs = {{.id = 0, }, }, .txqs = {{.id = 0, }, }, },
         {.id = 1, .nrxq = 0, .ntxq = 1, .txqs = {{.id = 0, }, }, }, },
     },
@@ -1327,6 +1335,10 @@ static void port_index_init(void)
 #endif
 }
 
+/**
+获取woker.type = slave的数量
+以cpu_id为下标的掩码
+ */
 void netif_get_slave_lcores(uint8_t *nb, uint64_t *mask)
 {
     int i = 0;
@@ -1416,24 +1428,32 @@ static inline void dump_lcore_role(void)
     RTE_LOG(INFO, NETIF, "LCORE ROLES:\n%s\n", results);
 }
 
+/**
+初始化lcore_role数组
+cid表示lcore id，role表示lcore的角色
+
+ */
 static void lcore_role_init(void)
 {
     int i, cid;
 
     for (cid = 0; cid < DPVS_MAX_LCORE; cid++)
         if (!rte_lcore_is_enabled(cid))
+            // 不可用的core标记为：LCORE_ROLE_MAX
             /* invalidate the disabled cores */
             g_lcore_role[cid] = LCORE_ROLE_MAX;
 
     cid = rte_get_main_lcore();
 
     assert(g_lcore_role[cid] == LCORE_ROLE_IDLE);
+    // main函数所在主线程标记为：LCORE_ROLE_MASTER
     g_lcore_role[cid] = LCORE_ROLE_MASTER;
 
     i = 0;
     while (lcore_conf[i].nports > 0) {
         cid = lcore_conf[i].id;
         assert(g_lcore_role[cid] == LCORE_ROLE_IDLE);
+        // 将配置文件中配置的lcore类型赋值给g_lcore_role数组
         g_lcore_role[cid] = lcore_conf[i].type;
         i++;
     }
@@ -1441,6 +1461,7 @@ static void lcore_role_init(void)
     for (cid = 0; cid < DPVS_MAX_LCORE; cid++) {
         if (!list_empty(&isol_rxq_tab[cid])) {
             assert(g_lcore_role[cid] == LCORE_ROLE_IDLE);
+            // 将配置的隔离
             g_lcore_role[cid] =  LCORE_ROLE_ISOLRX_WORKER;
         }
     }
@@ -2382,6 +2403,9 @@ int netif_rcv(struct netif_port *dev, __be16 eth_type, struct rte_mbuf *mbuf)
     return pt->func(mbuf, dev);
 }
 
+/**
+pkts_from_ring：指明mbuf是否来自ring，有可能是来自前面的 dp_vs_redirect_ring arp_ring
+ */
 static int netif_deliver_mbuf(struct netif_port *dev, lcoreid_t cid,
                   struct rte_mbuf *mbuf, bool pkts_from_ring)
 {
@@ -2447,6 +2471,7 @@ int netif_rcv_mbuf(struct netif_port *dev, lcoreid_t cid, struct rte_mbuf *mbuf,
         dev = netif_port_get(mbuf->port);
         if (unlikely(!dev))
             goto drop;
+        // 将vlan处理以后重新获取到eth_hdr
         eth_hdr = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr *);
     }
 
@@ -2582,7 +2607,7 @@ void lcore_process_packets(struct rte_mbuf **mbufs, lcoreid_t cid, uint16_t coun
             t++;
         }
 
-        /* handler should free mbuf */
+        /* handler should free mbuf 分割单个mbuf并进行处理 */
         netif_deliver_mbuf(dev, cid, mbuf, pkts_from_ring);
     }
 }
@@ -2622,14 +2647,15 @@ static void lcore_job_recv_fwd(void *arg)
         for (j = 0; j < lcore_conf[lcore2index[cid]].pqs[i].nrxq; j++) {
             // 遍历当前nic端口对应的rx队列
             qconf = &lcore_conf[lcore2index[cid]].pqs[i].rxqs[j];
-
+            // 提前处理 arp_ring 队列
             lcore_process_arp_ring(cid);
+            // 提前处理 dp_vs_redirect_ring 队列
             lcore_process_redirect_ring(cid);
             // 从nic的rx队列中取出数据包
             qconf->len = netif_rx_burst(pid, qconf);
             // 记录lcore的收包统计信息
             lcore_stats_burst(&lcore_stats[cid], qconf->len);
-
+            // 处理每个接受队列里的数据包
             lcore_process_packets(qconf->mbufs, cid, qconf->len, 0);
         }
     }
@@ -3200,19 +3226,23 @@ static inline void port_ntab_init(void)
         INIT_LIST_HEAD(&port_ntab[i]);
 }
 
+/**
+获取物理网卡和聚合网卡的名称
+ */
 static inline int port_name_alloc(portid_t pid, char *pname, size_t buflen)
 {
     assert(pname && buflen > 0);
     memset(pname, 0, buflen);
     if (is_physical_port(pid)) {
         struct port_conf_stream *current_cfg;
+        // 遍历配置: netif_defs.device
         list_for_each_entry_reverse(current_cfg, &port_list, port_list_node) {
-            if (current_cfg->port_id < 0) {
+            if (current_cfg->port_id < 0) { // 判断port_id是否为-1，若为-1则表示该端口未配置，则分配该端口号
                 current_cfg->port_id = pid;
                 if (current_cfg->name[0])
                     snprintf(pname, buflen, "%s", current_cfg->name);
                 else
-                    snprintf(pname, buflen, "dpdk%d", pid);
+                    snprintf(pname, buflen, "dpdk%d", pid); // dpdk+pid
                 return EDPVS_OK;
             }
         }
@@ -3221,7 +3251,7 @@ static inline int port_name_alloc(portid_t pid, char *pname, size_t buflen)
     } else if (is_bond_port(pid)) {
         struct bond_conf_stream *current_cfg;
         list_for_each_entry_reverse(current_cfg, &bond_list, bond_list_node) {
-            if (current_cfg->port_id == pid) {
+            if (current_cfg->port_id == pid) { // current_cfg->port_id 已经在 netif_vdevs_add 被初始化成正确的port_id了
                 if (current_cfg->name[0])
                     snprintf(pname, buflen, "%s", current_cfg->name);
                 else
@@ -3497,6 +3527,11 @@ static struct netif_port* netif_rte_port_alloc(portid_t id, int nrxq,
     int ii;
     struct netif_port *port;
 
+    /*
+    如果希望 netif_port 结构体中直接包含 union netif_bond 的数据，
+    而不是仅仅包含一个指针，就需要在分配内存时为 union netif_bond 分配额外的空间。
+    这样做的好处是可以减少一次指针解引用的操作，提高性能。
+    */
     port = rte_zmalloc("port", sizeof(struct netif_port) +
             sizeof(union netif_bond), RTE_CACHE_LINE_SIZE);
     if (!port) {
@@ -3505,7 +3540,7 @@ static struct netif_port* netif_rte_port_alloc(portid_t id, int nrxq,
     }
 
     port->id = id;
-    port->bond = (union netif_bond *)(port + 1);
+    port->bond = (union netif_bond *)(port + 1); // 将前面为 netif_bond 分配额外的空间，通过指针偏移进行赋值访问
     if (is_physical_port(id)) {
         port->type = PORT_TYPE_GENERAL; /* update later in netif_rte_port_alloc */
         port->netif_ops = &dpdk_netif_ops;
@@ -3517,7 +3552,7 @@ static struct netif_port* netif_rte_port_alloc(portid_t id, int nrxq,
         rte_free(port);
         return NULL;
     }
-
+    // 通过port_id从dpvs.config 文件中获取端口名称并对port->name进行赋值
     if (port_name_alloc(id, port->name, sizeof(port->name)) != EDPVS_OK) {
         RTE_LOG(ERR, NETIF, "%s: fail to get port name for port%d\n",
                 __func__, id);
@@ -3604,6 +3639,7 @@ int netif_get_queue(struct netif_port *port, lcoreid_t cid, queueid_t *qid)
     assert(port && port->netif_ops && qid);
 
     if (port->netif_ops->op_get_queue)
+        // 只有vlan接口有做op_get_queue设置: netif_ops = vlan_netif_ops.vlan_get_queue
         return port->netif_ops->op_get_queue(port, cid, qid);
 
     /* for device (like dpdk/bonding) has lcore_conf */
@@ -4232,28 +4268,30 @@ static int relate_bonding_device(void)
     struct netif_port *mport, *sport;
 
     list_for_each_entry_reverse(bond_conf, &bond_list, bond_list_node) {
-        mport = netif_port_get_by_name(bond_conf->name);
+        mport = netif_port_get_by_name(bond_conf->name); // 通过name获取创建的netif_port
         if (!mport) {
             RTE_LOG(ERR, NETIF, "%s: bonding master device %s not found\n",
                     __func__, bond_conf->name);
             return EDPVS_NOTEXIST;
         }
-        assert(mport->type == PORT_TYPE_BOND_MASTER);
+        assert(mport->type == PORT_TYPE_BOND_MASTER); // 在 netif_rte_port_alloc 中对bond的type都初始化成PORT_TYPE_BOND_MASTER
         mport->bond->master.mode = bond_conf->mode;
         for (i = 0; bond_conf->slaves[i][0] && i < NETIF_MAX_BOND_SLAVES; i++) {
-            sport = netif_port_get_by_name(bond_conf->slaves[i]);
+            sport = netif_port_get_by_name(bond_conf->slaves[i]); // 获取bond配置的slave，例如dpdk0
             if (!sport) {
                 RTE_LOG(ERR, NETIF, "%s: bonding slave device %s not found\n",
                         __func__, bond_conf->slaves[i]);
                 return EDPVS_NOTEXIST;
             }
             if (sport->bond->slave.master) {
+                // 从这里看出具体的slave只能属于单个bond，即dpdk0已经是bond0的slave了，就不能再将dpdk0再加入bond1的slave
                 RTE_LOG(ERR, NETIF, "%s: device %s is slave of %s already\n",
                         __func__, bond_conf->slaves[i], sport->bond->slave.master->name);
                 return EDPVS_EXIST;
             }
             mport->bond->master.slaves[i] = sport;
             if (!strcmp(bond_conf->slaves[i], bond_conf->primary)) {
+                // 进到这里说明当前的sport是primary
                 mport->bond->master.primary = sport;
                 rte_ether_addr_copy(&sport->addr, &mport->addr);  /* use primary slave's macaddr for bonding */
             }
@@ -4265,7 +4303,13 @@ static int relate_bonding_device(void)
                         sport->name, sport->socket);
                 sport->socket = mport->socket;
             }
+            /**
+            假如使用的是配置：dpvs.bond.conf.sample,
+            从这里可以看出，PORT_TYPE_BOND_SLAVE是物理网卡的属性，意思是dpdk0、dpdk1是bond0的slave，
+            bond0是dpdk0、dpdk1的master，所以bond0的type是PORT_TYPE_BOND_MASTER
+             */
             sport->type = PORT_TYPE_BOND_SLAVE;
+            // 表明当前这个物理网卡所属的bond是哪个
             sport->bond->slave.master = mport;
         }
         mport->bond->master.slave_nb = i;
@@ -4383,7 +4427,7 @@ static void netif_port_init(void)
     struct rte_eth_conf this_eth_conf;
     char *kni_name;
 
-    nports = dpvs_rte_eth_dev_count();
+    nports = dpvs_rte_eth_dev_count(); // 获取dpdk配置的网卡个数（这里包含物理网卡和bond聚合网卡）
     if (nports <= 0)
         rte_exit(EXIT_FAILURE, "No dpdk ports found!\n"
                 "Possibly nic or driver is not dpdk-compatible.\n");
@@ -4405,10 +4449,10 @@ static void netif_port_init(void)
         port = netif_rte_port_alloc(pid, 0, 0, &this_eth_conf);
         if (!port)
             rte_exit(EXIT_FAILURE, "Port allocate fail, exiting...\n");
-        if (netif_port_register(port) < 0)
+        if (netif_port_register(port) < 0) // 将刚创建的netif_port注册到两个列表: port_ntab port_tab
             rte_exit(EXIT_FAILURE, "Port register fail, exiting...\n");
     }
-
+    // 假如配置了bonding，这里就根据bond的相关配置构建各个port之间的关系
     if (relate_bonding_device() < 0)
         rte_exit(EXIT_FAILURE, "relate_bonding_device fail, exiting...\n");
 
@@ -4444,13 +4488,14 @@ static int obtain_dpdk_bond_name(char *dst, const char *ori, size_t size)
 {
     char str[IFNAMSIZ];
     unsigned num;
-
+    // 假如dst=bond0，那么str=bond，num=0
     if (!ori || sscanf(ori, "%[_a-zA-Z]%u", str, &num) != 2)
         return EDPVS_INVAL;
 
     /*
      * DPDK need bonding device name start with "net_bonding"
      * to match the driver.
+     dst会变成net_bonding0
      */
     snprintf(dst, size, "net_bonding%u", num);
 
@@ -4494,6 +4539,7 @@ int netif_vdevs_add(void)
     if (!list_empty(&bond_list))
         bond_pid_base = phy_pid_end;
 
+    // 遍历聚合接口配置列表: bond_list
     list_for_each_entry_reverse(bond_cfg, &bond_list, bond_list_node) {
         char bondname[IFNAMSIZ] = {'\0'};
 
@@ -4509,7 +4555,7 @@ int netif_vdevs_add(void)
                     __func__, bond_cfg->name, bond_cfg->slaves[0]);
             strncpy(bond_cfg->primary, bond_cfg->slaves[0], sizeof(bond_cfg->primary));
         }
-
+        // 修改名称：bond0 -> net_bonding
         ret = obtain_dpdk_bond_name(bondname, bond_cfg->name, IFNAMSIZ);
         if (ret != EDPVS_OK) {
             RTE_LOG(ERR, NETIF, "%s: invalid bonding device name in config file %s\n",
@@ -4540,10 +4586,14 @@ int netif_vdevs_add(void)
     }
 
     if (!list_empty(&bond_list)) {
-        bond_pid_end = dpvs_rte_eth_dev_count();
+        bond_pid_end = dpvs_rte_eth_dev_count();// 前面添加的聚合接口：rte_eth_bond_create，这里会重新返回新增的数量
         port_id_end = max(port_id_end, bond_pid_end);
         RTE_LOG(INFO, NETIF, "bonding device port id range: [%d, %d)\n", bond_pid_base, bond_pid_end);
     }
+    /**
+    所以真相是，phy_pid_base <= pid < phy_pid_end 是dpdk脚本添加的：dpdk-devbind.py --bind=igb_uio eth1
+    bond_pid_base <= pid < bond_pid_end 是这里通过rte_eth_bond_create添加的
+     */
 
     return EDPVS_OK;
 }

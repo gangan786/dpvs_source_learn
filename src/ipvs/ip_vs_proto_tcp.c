@@ -738,7 +738,9 @@ static void tcp_out_init_seq(struct dp_vs_conn *conn, struct tcphdr *th)
     conn->fnat_seq.fdata_seq = ntohl(th->seq) + 1;
 }
 
-/* set @verdict if failed to schedule */
+/* set @verdict if failed to schedule 
+ 被调用位置: __dp_vs_in
+*/
 static int tcp_conn_sched(struct dp_vs_proto *proto,
                           const struct dp_vs_iphdr *iph,
                           struct rte_mbuf *mbuf,
@@ -794,6 +796,7 @@ static int tcp_conn_sched(struct dp_vs_proto *proto,
         return EDPVS_INVAL;
     }
 
+    // 通过目的端口和目的IP查找虚拟服务，这个虚拟服务代表着负载均衡器对外提供的公网IP和80端口（大多数提供的是公网IP和80端口）
     svc = dp_vs_service_lookup(iph->af, iph->proto, &iph->daddr, th->dest,
                                0, mbuf, NULL, rte_lcore_id());
     if (!svc) {
@@ -808,7 +811,7 @@ static int tcp_conn_sched(struct dp_vs_proto *proto,
         *verdict = INET_ACCEPT;
         return EDPVS_NOSERV;
     }
-
+    // 能走到这里说明synproxy没有开启
     *conn = dp_vs_schedule(svc, iph, mbuf, false);
     if (!*conn) {
         *verdict = INET_DROP;

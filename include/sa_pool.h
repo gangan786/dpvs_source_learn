@@ -71,16 +71,19 @@ struct sa_entry {
     __be16                  port;
 };
 
+/**
+地址池：描述了realService对应可用的localIP和localPort。
+ */
 struct sa_entry_pool {
-    struct sa_entry         *sa_entries;
-    struct list_head        used_enties;
-    struct list_head        free_enties;
+    struct sa_entry         *sa_entries; // 全量的localIP和localPort列表
+    struct list_head        used_enties; // 已使用的localIP和localPort列表
+    struct list_head        free_enties; // 空闲的、未使用的localIP和localPort列表
     /* another way is use total_used/free_cnt in sa_pool,
      * so that we need not travels the hash to get stats.
      * we use cnt here, since we may need per-pool stats. */
-    uint16_t                used_cnt;
+    uint16_t                used_cnt; // 记录列表数量
     uint16_t                free_cnt;
-    uint32_t                miss_cnt;
+    uint32_t                miss_cnt; // 记录当前pool分配localIP和localPort失败的次数
     uint16_t                shift;
 };
 

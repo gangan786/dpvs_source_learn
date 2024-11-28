@@ -69,6 +69,8 @@ static inline int dp_vs_fill_iphdr(int af, struct rte_mbuf *mbuf,
  * IPVS persistent scheduling funciton.
  * It create a connection entry according to its template if exists,
  * or selects a server and creates a connection entry plus a template.
+ * 负载均衡器中的持久化调度功能是指将来自同一客户端的请求始终定向到同一个后端服务器。
+ * 这种机制确保了会话的一致性和状态的连续性
  */
 static struct dp_vs_conn *dp_vs_sched_persist(struct dp_vs_service *svc,
         const struct dp_vs_iphdr *iph, struct rte_mbuf *mbuf, bool is_synproxy_on)
@@ -297,7 +299,7 @@ struct dp_vs_conn *dp_vs_schedule(struct dp_vs_service *svc,
 
     /**
     根据调度算法，获取rs节点
-    1. 一致性hash调度：dp_vs_conhash_schedule
+    1. 一致性hash调度: dp_vs_conhash_scheduler.dp_vs_conhash_schedule
      */
     dest = svc->scheduler->schedule(svc, mbuf, iph);
     if (!dest) {
@@ -339,6 +341,12 @@ struct dp_vs_conn *dp_vs_schedule(struct dp_vs_service *svc,
                               ports[1], ports[0],
                               0, &param);
     } else {
+        /*
+        caddr: 源IP/客户端IP
+        vaddr: 目的IP/vip
+        cport: 客户端源端口
+        vport: 服务端目的端口
+         */
         dp_vs_conn_fill_param(iph->af, iph->proto,
                               &iph->saddr, &iph->daddr,
                               ports[0], ports[1], 0, &param);
@@ -414,7 +422,9 @@ static int xmit_inbound(struct rte_mbuf *mbuf,
         return INET_ACCEPT;
     }
 
-    /* forward to RS */
+    /* forward to RS 
+    dp_vs_xmit_fnat
+    */
     err = conn->packet_xmit(prot, conn, mbuf);
     if (err != EDPVS_OK)
         RTE_LOG(DEBUG, IPVS, "%s: fail to transmit: %d\n", __func__, err);
@@ -978,8 +988,11 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
         return INET_ACCEPT;
 
     /*
+    IP分片是将TCP/UDP分片数据包分成多个数据包，然后通过IP头中的标识符（fragment id）将这些数据包重新组合成一个完整的数据包。
+    所以除了第一个IP分片以外，剩下的是不包含TCP/UDP头的，也就是说拿不到端口信息构成完整的五元组，这样就拿不到 dp_vs_conn
+    RSS/flow-director是一种网络技术，能通过IP和端口信息来将数据包分配到对应的CPU核上，从而实现负载均衡。
      * Defrag ipvs-forwarding TCP/UDP is not supported for some reasons,
-     *
+     * 
      * - RSS/flow-director do not support TCP/UDP fragments, means it's
      *   not able to direct frags to same lcore as original TCP/UDP packets.
      * - per-lcore conn table will miss if frags reachs wrong lcore.
@@ -995,7 +1008,7 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
     }
 
     /* packet belongs to existing connection ? 
-    1 dp_vs_proto_tcp.conn_lookup = tcp_conn_lookup ，如果conn属性redirect有值，peer_cid会被赋值
+    1 dp_vs_proto_tcp.conn_lookup = tcp_conn_lookup
     */
     conn = prot->conn_lookup(prot, &iph, mbuf, &dir, false, &drop, &peer_cid);
 
@@ -1007,7 +1020,8 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
 
     /*
      * The connection is not locally found, however the redirect is found so
-     * forward the packet to the remote redirect owner core.
+     * forward the packet to the remote redirect owner core.、
+     cid != peer_cid表明peer_cid是在conn_lookup被修改的，而且conn的值为null
      */
     if (cid != peer_cid) {
         /* recover mbuf.data_off to outer Ether header */
@@ -1018,7 +1032,7 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
 
     if (unlikely(!conn)) {
         /* try schedule RS and create new connection 
-        1.conn_sched = tcp_conn_sched
+        1. dp_vs_proto_tcp.conn_sched = tcp_conn_sched
         */
         if (prot->conn_sched(prot, &iph, mbuf, &conn, &verdict) != EDPVS_OK) {
             /* RTE_LOG(DEBUG, IPVS, "%s: fail to schedule.\n", __func__); */
@@ -1031,6 +1045,9 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
         else
             dir = DPVS_CONN_DIR_INBOUND;
     } else {
+        /*
+        dp_vs_proto_tcp.conn_expire_quiescent = tcp_conn_expire_quiescent
+        */
         /* assert(conn->dest != NULL); */
         if (prot->conn_expire_quiescent && (conn->flags & DPVS_CONN_F_EXPIRE_QUIESCENT) &&
                 conn->dest && (!dp_vs_dest_is_avail(conn->dest) ||
@@ -1089,7 +1106,7 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
     else
         return xmit_outbound(mbuf, prot, conn);
 }
-
+// 此方法被调用的地方可以追溯到: INET_HOOK
 static int dp_vs_in(void *priv, struct rte_mbuf *mbuf,
                       const struct inet_hook_state *state)
 {
@@ -1101,7 +1118,7 @@ static int dp_vs_in6(void *priv, struct rte_mbuf *mbuf,
 {
     return __dp_vs_in(priv, mbuf, state, AF_INET6);
 }
-
+// 
 static int __dp_vs_pre_routing(void *priv, struct rte_mbuf *mbuf,
                     const struct inet_hook_state *state, int af)
 {
@@ -1134,16 +1151,17 @@ static int __dp_vs_pre_routing(void *priv, struct rte_mbuf *mbuf,
         }
     }
 
-    /* Synproxy: defence synflood */
+    /* Synproxy: defence synflood + 黑白名单过滤 +  判断dp_vs_service.weight */
     if (IPPROTO_TCP == iph.proto) {
         int v = INET_ACCEPT;
+        // 不需要synproxy返回1
         if (0 == dp_vs_synproxy_syn_rcv(af, mbuf, &iph, &v))
             return v;
     }
 
     return INET_ACCEPT;
 }
-
+// 此方法被调用的地方可以追溯到: INET_HOOK
 static int dp_vs_pre_routing(void *priv, struct rte_mbuf *mbuf,
                     const struct inet_hook_state *state)
 {
@@ -1158,10 +1176,10 @@ static int dp_vs_pre_routing6(void *priv, struct rte_mbuf *mbuf,
 
 static struct inet_hook_ops dp_vs_ops[] = {
     {
-        .af         = AF_INET,
+        .af         = AF_INET, // ipv4
         .hook       = dp_vs_in,
         .hooknum    = INET_HOOK_PRE_ROUTING,
-        .priority   = 100,
+        .priority   = 100, // 数据包处理的优先级，值越小优先级越高
     },
     {
         .af         = AF_INET,
@@ -1170,7 +1188,7 @@ static struct inet_hook_ops dp_vs_ops[] = {
         .priority   = 99,
     },
     {
-        .af         = AF_INET6,
+        .af         = AF_INET6, // ipv6
         .hook       = dp_vs_in6,
         .hooknum    = INET_HOOK_PRE_ROUTING,
         .priority   = 100,

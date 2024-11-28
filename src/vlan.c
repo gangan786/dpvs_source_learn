@@ -102,7 +102,8 @@ static int vlan_xmit(struct rte_mbuf *mbuf, struct netif_port *dev)
     /* hand over it to real device */
     mbuf->port = vlan->real_dev->id;
     len = mbuf->pkt_len;
-
+    // 从上面的注释和代码看出，这里对vlan包的处理只是将mbuf的port设置为对vlan有处理能力的设备，
+    // 并将该mbuf通过这个设备发送出去
     err = netif_xmit(mbuf, vlan->real_dev);
 
     if (likely(err == EDPVS_OK)) {

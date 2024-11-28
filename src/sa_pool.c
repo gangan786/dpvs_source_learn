@@ -86,6 +86,7 @@ static uint64_t             sa_lcore_mask;
 static uint8_t              sa_pool_hash_size  = SAPOOL_DEF_HASH_SZ;
 static bool                 sapool_flow_enable = true;
 
+
 static int sa_pool_alloc_hash(struct sa_pool *ap, uint8_t hash_sz,
                                const struct sa_flow *flow)
 {
@@ -97,20 +98,24 @@ static int sa_pool_alloc_hash(struct sa_pool *ap, uint8_t hash_sz,
     uint32_t sa_entry_size;
     uint32_t sa_entry_num;
 
-    sa_entry_num = MAX_PORT >> flow->shift;
-    sa_entry_pool_size = sizeof(struct sa_entry_pool) * hash_sz;
-    sa_entry_size = sizeof(struct sa_entry) * sa_entry_num * hash_sz;
+    sa_entry_num = MAX_PORT >> flow->shift; // (65536 >> 4) = (0x10000 >> 4) = 0x1000 = 16384 
+    sa_entry_pool_size = sizeof(struct sa_entry_pool) * hash_sz; // 这个是sa_entry_pool所需要的空间
+    sa_entry_size = sizeof(struct sa_entry) * sa_entry_num * hash_sz; // 这个是sa_entry所需要的空间
 
+    /* pool_hash是个sa_entry_pool数组，需要hash_sz个sa_entry_pool，而每个sa_entry_pool又需要sa_entry个sa_entry，
+    所以需要计算出sa_entry_pool_size+sa_entry_size，这样sa_entry_pool和sa_entry就能放在同一块内存上
+    */
     ap->pool_hash = rte_malloc(NULL, sa_entry_pool_size + sa_entry_size,
                                RTE_CACHE_LINE_SIZE);
     if (!ap->pool_hash)
         return EDPVS_NOMEM;
 
     ap->pool_hash_sz = hash_sz;
-    sep = (struct sa_entry *)&ap->pool_hash[hash_sz];
+    sep = (struct sa_entry *)&ap->pool_hash[hash_sz]; // 将pool_hash的结尾作为sa_entry的起始地址
 
     /* the big loop may take tens of milliseconds */
     for (hash = 0; hash < hash_sz; hash++) {
+        // 遍历ap的sa_entry_pool数组
         pool = &ap->pool_hash[hash];
 
         INIT_LIST_HEAD(&pool->used_enties);
@@ -119,13 +124,15 @@ static int sa_pool_alloc_hash(struct sa_pool *ap, uint8_t hash_sz,
         pool->used_cnt = 0;
         pool->free_cnt = 0;
         pool->shift = flow->shift;
-        pool->sa_entries = &sep[sa_entry_num * hash];
+        pool->sa_entries = &sep[sa_entry_num * hash]; // 获取sa_entry数组的起始地址
 
         for (port = ap->low; port <= ap->high; port++) {
             struct sa_entry *sa;
 
+            // 从这个判断逻辑可以看出，pool里面的port是跟core相关的，可以根据port判断他应该是属于哪个lcore处理
             if (flow->mask &&
                 ((uint16_t)port & flow->mask) != ntohs(flow->port_base))
+                // 端口后mask位是port_base的，才能被使用
                 continue;
 
             sa = &pool->sa_entries[(uint16_t)(port >> pool->shift)];
@@ -224,6 +231,7 @@ int sa_pool_create(struct inet_ifaddr *ifa, uint16_t low, uint16_t high)
     ap->flags = 0;
     rte_atomic32_set(&ap->refcnt, 1);
 
+    // sa_flows初始化方法: sa_pool_init
     err = sa_pool_alloc_hash(ap, sa_pool_hash_size, &sa_flows[cid]);
     if (err != EDPVS_OK) {
         goto free_ap;
@@ -322,7 +330,7 @@ sa_pool_hash(const struct sa_pool *ap, const struct sockaddr_storage *ss)
         vect[0] = ntohl(sin->sin_addr.s_addr) & 0xffff;
         vect[1] = ntohs(sin->sin_port);
         hashkey = (vect[0] + vect[1]) % ap->pool_hash_sz;
-
+        // 每个realService对应的IP和端口都对应一个sa_entry_pool
         return &ap->pool_hash[hashkey];
     } else if (ss->ss_family == AF_INET6) {
         uint32_t vect[5] = { 0 };
@@ -338,6 +346,9 @@ sa_pool_hash(const struct sa_pool *ap, const struct sockaddr_storage *ss)
     }
 }
 
+/**
+从pool的空闲列表取出可用的localIp和localPort
+ */
 static inline int sa_pool_fetch(struct sa_entry_pool *pool,
                                 struct sockaddr_storage *ss)
 {
@@ -347,6 +358,7 @@ static inline int sa_pool_fetch(struct sa_entry_pool *pool,
     struct sockaddr_in *sin = (struct sockaddr_in *)ss;
     struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)ss;
 
+    // 参数pool中的端口是在这个方法提前预分配的: sa_pool_alloc_hash
     ent = list_first_entry_or_null(&pool->free_enties, struct sa_entry, list);
     if (!ent) {
 #ifdef CONFIG_DPVS_SAPOOL_DEBUG
@@ -488,9 +500,8 @@ static int sa4_fetch(struct netif_port *dev,
             inet_addr_ifa_put(ifa);
             return EDPVS_INVAL;
         }
-
-        err = sa_pool_fetch(sa_pool_hash(ifa->sa_pool,
-                            (struct sockaddr_storage *)daddr),
+        // sa_pool_fetch会覆盖掉 saddr->sin_addr.s_addr 的值
+        err = sa_pool_fetch(sa_pool_hash(ifa->sa_pool,(struct sockaddr_storage *)daddr),
                             (struct sockaddr_storage *)saddr);
         if (err == EDPVS_OK)
             rte_atomic32_inc(&ifa->sa_pool->refcnt);
@@ -716,10 +727,14 @@ int sa_pool_init(void)
     lcoreid_t cid;
     uint16_t port_base;
 
-    /* enabled lcore should not change after init */
+    /* enabled lcore should not change after init 
+    如果使用的是：dpvs.conf.sample，那么
+    sa_nlcore = 8
+    sa_lcore_mask = 0b111111110
+    */
     netif_get_slave_lcores(&sa_nlcore, &sa_lcore_mask);
 
-    /* how many mask bits needed ? */
+    /* how many mask bits needed ? shift = 4 */
     for (shift = 0; (0x1<<shift) < sa_nlcore; shift++)
         ;
     if (shift >= 16)
@@ -727,11 +742,11 @@ int sa_pool_init(void)
 
     port_base = 0;
     for (cid = 0; cid < DPVS_MAX_LCORE; cid++) {
-        if (cid >= 64 || !(sa_lcore_mask & (1L << cid)))
+        if (cid >= 64 || !(sa_lcore_mask & (1L << cid))) // 通过前面的sa_lcore_mask掩码筛选出正确的cid 费这老大劲服了
             continue;
         assert(rte_lcore_is_enabled(cid) && cid != rte_get_main_lcore());
 
-        sa_flows[cid].mask = ~((~0x0) << shift);
+        sa_flows[cid].mask = ~((~0x0) << shift); // = ~((~00000000) << 4) = ~((0x11111111) << 4) = ~((0x11110000)) = 0x00001111 = 15
         sa_flows[cid].lcore = cid;
         sa_flows[cid].port_base = htons(port_base);
         sa_flows[cid].shift = shift;

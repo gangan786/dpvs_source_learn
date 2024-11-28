@@ -102,6 +102,7 @@ void dp_vs_redirect_hash(struct dp_vs_conn *conn)
     struct dp_vs_redirect *r = conn->redirect;
 
     if (!r || unlikely(dp_vs_conn_is_redirect_hashed(conn))) {
+        // conn缺少dp_vs_redirect或者已经添加dp_vs_cr_tbl表中，直接返回
         return;
     }
 
@@ -112,6 +113,7 @@ void dp_vs_redirect_hash(struct dp_vs_conn *conn)
     list_add(&r->list, &dp_vs_cr_tbl[hash]);
     rte_spinlock_unlock(&dp_vs_cr_lock[hash]);
 
+    // 将conn标识为以加入dp_vs_cr_tbl表，以便快速查找和管理
     dp_vs_conn_set_redirect_hashed(conn);
 }
 

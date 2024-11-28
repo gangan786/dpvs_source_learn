@@ -135,6 +135,7 @@ static inline struct dp_vs_laddr *__get_laddr(struct dp_vs_service *svc)
         return NULL;
     }
 
+    // 用于处理rr或者wrr调度算法，如果是 rr 或 wrr 调度器，step以 5% 的概率返回 2，否则返回 1
     step = __laddr_step(svc);
     while (step-- > 0) {
         if (unlikely(!svc->laddr_curr))
@@ -199,11 +200,11 @@ int dp_vs_laddr_bind(struct dp_vs_conn *conn, struct dp_vs_service *svc)
             struct sockaddr_in *daddr, *saddr;
             daddr = (struct sockaddr_in *)&dsin;
             daddr->sin_family = laddr->af;
-            daddr->sin_addr = conn->daddr.in;
-            daddr->sin_port = conn->dport;
+            daddr->sin_addr = conn->daddr.in; // 设置目的地址destinaAddr为后端realService的IP
+            daddr->sin_port = conn->dport; // 设置目的端口destinaPort为后端realService的端口
             saddr = (struct sockaddr_in *)&ssin;
             saddr->sin_family = laddr->af;
-            saddr->sin_addr = laddr->addr.in;
+            saddr->sin_addr = laddr->addr.in; // 设置源地址sourceAddr为localIP
         } else {
             struct sockaddr_in6 *daddr, *saddr;
             daddr = (struct sockaddr_in6 *)&dsin;
@@ -214,7 +215,7 @@ int dp_vs_laddr_bind(struct dp_vs_conn *conn, struct dp_vs_service *svc)
             saddr->sin6_family = laddr->af;
             saddr->sin6_addr = laddr->addr.in6;
         }
-
+        // dsin指向realService的IP和端口，ssin指向本地出口IP信息
         if (sa_fetch(laddr->af, laddr->iface, &dsin, &ssin) != EDPVS_OK) {
             char buf[64];
             if (inet_ntop(laddr->af, &laddr->addr, buf, sizeof(buf)) == NULL)
@@ -230,6 +231,7 @@ int dp_vs_laddr_bind(struct dp_vs_conn *conn, struct dp_vs_service *svc)
 
         sport = (laddr->af == AF_INET ? (((struct sockaddr_in *)&ssin)->sin_port)
                 : (((struct sockaddr_in6 *)&ssin)->sin6_port));
+        // true表示了可以使用的
         found = true;
         break;
     }

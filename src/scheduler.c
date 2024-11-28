@@ -22,15 +22,7 @@
 
 /* Note: lockless, lcore_job can only be register on initialization stage and
  *       unregistered on cleanup stage.
-    &reload_job, LCORE_ROLE_MASTER
-    &msg_master_job, LCORE_ROLE_MASTER
-    &msg_slave_job, LCORE_ROLE_FWD_WORKER
-    &msg_master_job, LCORE_ROLE_MASTER
-    &iftraf_job, LCORE_ROLE_MASTER
-    &frag_job, LCORE_ROLE_FWD_WORKER
-    &neigh_jobs[i].job,neigh_jobs[i].role
-    &netif_jobs[i].job, netif_jobs[i].role
-    &qsch_sched_job, LCORE_ROLE_FWD_WORKER
+    job的注册：dpvs_lcore_job_register
  */
 static struct list_head dpvs_lcore_jobs[LCORE_ROLE_MAX][LCORE_JOB_TYPE_MAX];
 
@@ -88,15 +80,24 @@ void dpvs_lcore_job_init(struct dpvs_lcore_job *job, char *name,
 
 /*
 注册job任务
-重新加载配置信息：&reload_job, LCORE_ROLE_MASTER
-&msg_master_job, LCORE_ROLE_MASTER
-&msg_slave_job, LCORE_ROLE_FWD_WORKER
-&msg_master_job, LCORE_ROLE_MASTER
-&iftraf_job, LCORE_ROLE_MASTER
-&frag_job, LCORE_ROLE_FWD_WORKER
-&neigh_jobs[i].job,neigh_jobs[i].role
-&netif_jobs[i].job, netif_jobs[i].role
-&qsch_sched_job, LCORE_ROLE_FWD_WORKER
+1. 通过SIGHUP信号重新加载配置:
+    &reload_job, LCORE_ROLE_MASTER, LCORE_JOB_LOOP
+2. 处理master core的msg_ring信息的:
+    &msg_master_job, LCORE_ROLE_MASTER, LCORE_JOB_LOOP
+3. 处理除master core以外的msg_ring信息的:
+    &msg_slave_job, LCORE_ROLE_FWD_WORKER
+4. 统计每个网络接口的流量信息
+    &iftraf_job, LCORE_ROLE_MASTER, LCORE_JOB_LOOP
+5. 释放某种mbuf:
+    &frag_job, LCORE_ROLE_FWD_WORKER, LCORE_JOB_SLOW
+6.处理 neigh_ring :
+    &neigh_jobs[i].job,neigh_jobs[i].role
+7. 集合
+    &netif_jobs[i].job, netif_jobs[i].role
+8. 流量控制:
+    &qsch_sched_job, LCORE_ROLE_FWD_WORKER
+9. 监听控制面指令并进行设置:
+    sockopt_job, LCORE_JOB_LOOP, LCORE_ROLE_MASTER
 */
 int dpvs_lcore_job_register(struct dpvs_lcore_job *lcore_job, dpvs_lcore_role_t role)
 {

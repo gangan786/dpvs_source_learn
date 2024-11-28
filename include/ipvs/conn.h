@@ -94,7 +94,7 @@ struct dp_vs_conn {
     uint16_t                lport;
     uint16_t                dport;
 
-    struct rte_mempool      *connpool;
+    struct rte_mempool      *connpool; /* 表明当前dp_vs_conn对象被alloc的内存池 */
     struct conn_tuple_hash  tuplehash[DPVS_CONN_DIR_MAX];
     rte_atomic32_t          refcnt;
     struct dpvs_timer       timer;
@@ -112,6 +112,16 @@ struct dp_vs_conn {
     uint32_t                rs_end_ack;
 
     // 这里面包含转发模式例如fallnat的处理
+    /**
+    下面两个函数指针初始化的位置: dp_vs_conn_bind_dest
+
+    DPVS_FWD_MODE_FNAT: 
+      packet_xmit: dp_vs_xmit_fnat
+      packet_out_xmit: dp_vs_out_xmit_fnat
+    DPVS_FWD_MODE_SNAT:
+      packet_xmit: dp_vs_xmit_snat
+      packet_out_xmit: dp_vs_out_xmit_snat
+     */
     int (*packet_xmit)(struct dp_vs_proto *prot,
                         struct dp_vs_conn *conn,
                         struct rte_mbuf *mbuf);

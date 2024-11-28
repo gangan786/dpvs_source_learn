@@ -157,6 +157,7 @@ int cfgfile_init(void)
     sigemptyset(&sig.sa_mask);
     sig.sa_flags = 0;
 
+    /** dpvs通过 kill 发送SIGHUP信号重新加载配置文件，以实现配置的在线修改 */
     ret = sigaction(SIGHUP, &sig, NULL);
     if (ret < 0) {
         RTE_LOG(ERR, CFG_FILE, "%s: signal handler register failed\n", __func__);
