@@ -71,7 +71,7 @@ static int inet_addr_sync(const struct ifaddr_action *param);
 
 static uint32_t ifa_msg_seq(void)
 {
-    static uint32_t counter = 0;        /* for mc msg, called from master only */
+    static uint32_t counter = 0;        /* for mc msg, called from master only 静态变量只会初始化一次，在函数调用结束后不会销毁*/
     return counter++;
 }
 
@@ -862,6 +862,7 @@ static int ifa_entry_add(const struct ifaddr_action *param)
         goto del_mc;
 
     if (ifa->flags & IFA_F_SAPOOL) {
+        // 构建SNAT/FullNAT所需的localPort池（main lcore除外）
         err = sa_pool_create(ifa, 0, 0);
         if (err != EDPVS_OK)
             goto del_route;
@@ -2039,6 +2040,7 @@ static struct dpvs_sockopts agent_ifa_sockopts = {
 #endif
 
 static struct dpvs_sockopts ifa_sockopts = {
+    // 
     .version        = SOCKOPT_VERSION,
     .set_opt_min    = SOCKOPT_SET_IFADDR_ADD,
     .set_opt_max    = SOCKOPT_SET_IFADDR_FLUSH,

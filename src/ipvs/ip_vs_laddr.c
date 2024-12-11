@@ -903,6 +903,7 @@ static int laddr_sockopt_get(sockoptid_t opt, const void *conf, size_t size,
 }
 
 static struct dpvs_sockopts laddr_sockopts = {
+    // 
     .version            = SOCKOPT_VERSION,
     .set_opt_min        = SOCKOPT_SET_LADDR_ADD,
     .set_opt_max        = SOCKOPT_SET_LADDR_FLUSH,

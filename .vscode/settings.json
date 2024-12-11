@@ -1,5 +1,8 @@
 {
     "clangd.arguments": [
         "--compile-commands-dir=${workspaceFolder}/"
-    ]
+    ],
+    "remote.SSH.keepaliveInterval": 30000,
+    "remote.SSH.useLocalServer": true,
+    "remote.SSH.showLoginTerminal": true
 }

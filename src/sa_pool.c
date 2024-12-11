@@ -98,7 +98,7 @@ static int sa_pool_alloc_hash(struct sa_pool *ap, uint8_t hash_sz,
     uint32_t sa_entry_size;
     uint32_t sa_entry_num;
 
-    sa_entry_num = MAX_PORT >> flow->shift; // (65536 >> 4) = (0x10000 >> 4) = 0x1000 = 16384 
+    sa_entry_num = MAX_PORT >> flow->shift; // (65536 >> flow->shift) = (2^16 >> flow->shift) = 2^(16 - 3) = 8192（意味着一个地址池sa_entry_pool最多存8192个端口） 
     sa_entry_pool_size = sizeof(struct sa_entry_pool) * hash_sz; // 这个是sa_entry_pool所需要的空间
     sa_entry_size = sizeof(struct sa_entry) * sa_entry_num * hash_sz; // 这个是sa_entry所需要的空间
 
@@ -111,9 +111,12 @@ static int sa_pool_alloc_hash(struct sa_pool *ap, uint8_t hash_sz,
         return EDPVS_NOMEM;
 
     ap->pool_hash_sz = hash_sz;
-    sep = (struct sa_entry *)&ap->pool_hash[hash_sz]; // 将pool_hash的结尾作为sa_entry的起始地址
+    sep = (struct sa_entry *)&ap->pool_hash[hash_sz]; // 将pool_hash的结尾作为sa_entry数组的起始地址
 
-    /* the big loop may take tens of milliseconds */
+    /**  the big loop may take tens of milliseconds
+     因为port是自增+1的，导致最多需要自增2^flow->shift次，才能找到一个合适的port，这其中耗费的时间可能是不必要的，可以是一个优化点
+     虽然可以优化，但是考虑这个使用场景并不是频繁的，而且下面这个代码可读性也是比较好的，所以也还行。。。┓( ´∀` )┏
+     */
     for (hash = 0; hash < hash_sz; hash++) {
         // 遍历ap的sa_entry_pool数组
         pool = &ap->pool_hash[hash];
@@ -135,14 +138,18 @@ static int sa_pool_alloc_hash(struct sa_pool *ap, uint8_t hash_sz,
                 // 端口后mask位是port_base的，才能被使用
                 continue;
 
-            sa = &pool->sa_entries[(uint16_t)(port >> pool->shift)];
+            sa = &pool->sa_entries[(uint16_t)(port >> pool->shift)]; // 以port的前(16 - pool->shift)位作为索引下标
             sa->addr = ap->ifa->addr;
             sa->port = htons((uint16_t)port);
             list_add_tail(&sa->list, &pool->free_enties);
             pool->free_cnt++;
         }
     }
-
+    /**
+    总结：当加载dpvs.config.sample时，flow->shift = 4，
+        所以会使用端口号的后4位作为数据包该由哪个CPU处理的依据，
+        把端口号的前12位作为pool->sa_entries的索引下标
+     */
     return EDPVS_OK;
 }
 
@@ -232,11 +239,13 @@ int sa_pool_create(struct inet_ifaddr *ifa, uint16_t low, uint16_t high)
     rte_atomic32_set(&ap->refcnt, 1);
 
     // sa_flows初始化方法: sa_pool_init
+    // 根据sa_flows定义的规则，将localPort预先分配到地址池
     err = sa_pool_alloc_hash(ap, sa_pool_hash_size, &sa_flows[cid]);
     if (err != EDPVS_OK) {
         goto free_ap;
     }
 
+    // 调用rte_flow接口，添加rte_flow规则，根据tcp/udp端口将数据包投送到指定rx队列
     err = sa_pool_add_filter(ifa, ap, cid);
     if (err != EDPVS_OK) {
         goto free_hash;
@@ -734,7 +743,7 @@ int sa_pool_init(void)
     */
     netif_get_slave_lcores(&sa_nlcore, &sa_lcore_mask);
 
-    /* how many mask bits needed ? shift = 4 */
+    /* how many mask bits needed ? 0b1000 = 8 shift = 3 */
     for (shift = 0; (0x1<<shift) < sa_nlcore; shift++)
         ;
     if (shift >= 16)
@@ -746,9 +755,9 @@ int sa_pool_init(void)
             continue;
         assert(rte_lcore_is_enabled(cid) && cid != rte_get_main_lcore());
 
-        sa_flows[cid].mask = ~((~0x0) << shift); // = ~((~00000000) << 4) = ~((0x11111111) << 4) = ~((0x11110000)) = 0x00001111 = 15
+        sa_flows[cid].mask = ~((~0x0) << shift); // = ~((~00000000) << 3) = ~((11111111) << 3) = ~((0x11111000)) = 0x00000111 = 7
         sa_flows[cid].lcore = cid;
-        sa_flows[cid].port_base = htons(port_base);
+        sa_flows[cid].port_base = htons(port_base); // port_base的角色其实更像是网卡的rx队列id，根据前面的配置，port_base的值是0~7，正好对应配置文件里面的rx队列id：rx_queue_ids
         sa_flows[cid].shift = shift;
 
         port_base++;

@@ -96,7 +96,7 @@ void dpvs_lcore_job_init(struct dpvs_lcore_job *job, char *name,
     &netif_jobs[i].job, netif_jobs[i].role
 8. 流量控制:
     &qsch_sched_job, LCORE_ROLE_FWD_WORKER
-9. 监听控制面指令并进行设置:
+9. 监听控制面：dpvsadm、dpip、keepalived指令并进行设置:
     sockopt_job, LCORE_JOB_LOOP, LCORE_ROLE_MASTER
 */
 int dpvs_lcore_job_register(struct dpvs_lcore_job *lcore_job, dpvs_lcore_role_t role)

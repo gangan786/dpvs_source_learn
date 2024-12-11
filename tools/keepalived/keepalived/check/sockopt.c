@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include "../include/conf/common.h"
 
-static char dpvs_ipc_file[108];
+static char dpvs_ipc_file[108]; // 默认值: /var/run/dpvs.ipc
 
 /* send "n" bytes to a descriptor */
 ssize_t send_n(int fd, const void *vptr, size_t n, int flags)

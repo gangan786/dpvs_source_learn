@@ -632,6 +632,7 @@ parse_options(int argc, char **argv, struct ipvs_command_entry *ce,
             version_exit(0);
             break;
         case 'P':
+            // --add-laddr
             set_command(&ce->cmd, CMD_ADDLADDR);
             break;
         case 'Q':
@@ -668,6 +669,7 @@ parse_options(int argc, char **argv, struct ipvs_command_entry *ce,
             case 'u':
             case 'q':
             case '1':
+                // -t 10.0.0.100:80
                 set_option(options, OPT_SERVICE);
                 if (c == 't') {
                     ce->dpvs_svc.proto = IPPROTO_TCP;
@@ -874,6 +876,7 @@ parse_options(int argc, char **argv, struct ipvs_command_entry *ce,
                 break;
             case 'z':
                 {
+                    // -z 192.168.100.200
                     dpvs_service_compat_t  dpvs_svc;
 
                     set_option(options, OPT_LOCAL_ADDRESS);
@@ -917,6 +920,7 @@ parse_options(int argc, char **argv, struct ipvs_command_entry *ce,
 
                 }
             case 'F':
+                // -F dpdk0
                 set_option(options, OPT_IFNAME);
                 snprintf(ce->laddr.ifname, sizeof(ce->laddr.ifname), "%s", optarg);
 
@@ -1182,6 +1186,7 @@ static int process_options(int argc, char **argv, int reading_stdin)
             break;
 
         case CMD_ADDLADDR:
+            // --add-laddr
             result = dpvs_add_laddr(&ce.dpvs_svc, &ce.dpvs_laddr);
             break;
 

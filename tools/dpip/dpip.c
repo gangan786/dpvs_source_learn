@@ -216,6 +216,7 @@ int main(int argc, char *argv[])
     struct dpip_obj *obj;
     int err;
 
+    // 获取程序名
     if ((prog = strchr(argv[0], '/')) != NULL)
         *prog++ = '\0';
     else

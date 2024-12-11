@@ -181,7 +181,7 @@ static int get_pool_array_index(const struct dpvs_mempool *mp, int size)
     while (lower < upper) {
         if (size <= mp->pool_array[lower].obj_size)
             return lower;
-        mid = (lower + upper) / 2;
+        mid = (lower + upper) / 2; // 二分查找，pool_array按照obj_size从小到大排列，每个pool保存限定大小的对象
         if (size <= mp->pool_array[mid].obj_size)
             upper = mid;
         else

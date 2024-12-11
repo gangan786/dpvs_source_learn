@@ -408,6 +408,7 @@ int msg_destroy(struct dpvs_msg **pmsg)
     }
 
     if (!rte_atomic16_dec_and_test(&msg->refcnt)) {
+        // 只对引用计数做减一，只有0才释放
         *pmsg = NULL;
         return EDPVS_OK;
     }
@@ -468,6 +469,7 @@ int msg_send(struct dpvs_msg *msg, lcoreid_t cid, uint32_t flags, struct dpvs_ms
         return EDPVS_INVAL;
     add_msg_flags(msg, flags);
 
+    // 判断cid是否合法，是否属于master或者slave
     if (unlikely(!((cid == master_lcore) || (slave_lcore_mask & (1L << cid))))) {
         RTE_LOG(WARNING, MSGMGR, "%s:msg@%p, invalid args\n", __func__, msg);
         add_msg_flags(msg, DPVS_MSG_F_STATE_DROP);
@@ -482,6 +484,7 @@ int msg_send(struct dpvs_msg *msg, lcoreid_t cid, uint32_t flags, struct dpvs_ms
         return EDPVS_NOTEXIST;
     }
 
+    // 根据消息类型判断优先级
     if (mt->prio > g_msg_prio) {
         add_msg_flags(msg, DPVS_MSG_F_STATE_DROP);
         msg_type_put(mt);
@@ -491,7 +494,7 @@ int msg_send(struct dpvs_msg *msg, lcoreid_t cid, uint32_t flags, struct dpvs_ms
 
     /* two lcores will be using the msg now, increase its refcnt */
     rte_atomic16_inc(&msg->refcnt);
-    res = rte_ring_enqueue(msg_ring[cid], msg);
+    res = rte_ring_enqueue(msg_ring[cid], msg); // 将消息放到对应woker的队列
     if (unlikely(-EDQUOT == res)) {
         RTE_LOG(WARNING, MSGMGR, "%s:msg@%p, msg ring of lcore %d quota exceeded\n",
                 __func__, msg, cid);
@@ -508,6 +511,7 @@ int msg_send(struct dpvs_msg *msg, lcoreid_t cid, uint32_t flags, struct dpvs_ms
         return EDPVS_DPDKAPIFAIL;
     }
 
+    // 异步消息立即返回
     if (flags & DPVS_MSG_F_ASYNC)
         return EDPVS_OK;
 
@@ -555,6 +559,7 @@ int multicast_msg_send(struct dpvs_msg *msg, uint32_t flags, struct dpvs_multica
         return EDPVS_INVAL;
     add_msg_flags(msg, flags);
 
+    // 这里似乎只允许由master发送DPVS_MSG_MULTICAST多播类型的msg
     if (unlikely(DPVS_MSG_MULTICAST != msg->mode || master_lcore != msg->cid)) {
         RTE_LOG(WARNING, MSGMGR, "%s:msg@%p, invalid multicast msg\n", __func__, msg);
         add_msg_flags(msg, DPVS_MSG_F_STATE_DROP);
@@ -562,7 +567,7 @@ int multicast_msg_send(struct dpvs_msg *msg, uint32_t flags, struct dpvs_multica
         return EDPVS_INVAL;
     }
 
-    /* multicast msg of identical type and seq cannot coexist */
+    /* multicast msg of identical type and seq cannot coexist 防止msg重发 */
     if (unlikely(mc_queue_get(msg->type, msg->seq) != NULL)) {
         RTE_LOG(WARNING, MSGMGR, "%s:msg@%p, repeated sequence number for multicast msg: "
                 "type %d, seq %d\n", __func__, msg, msg->type, msg->seq);
@@ -761,6 +766,7 @@ int msg_slave_process(int step)
             goto cont;
         }
 
+        // ifa_msg_types --> MSG_TYPE_IFA_SET:  unicast_msg_cb = ifa_msg_set_cb
         if (likely(msg_type->unicast_msg_cb != NULL)) {
             if (msg_type->unicast_msg_cb(msg) < 0) {
                 add_msg_flags(msg, DPVS_MSG_F_CALLBACK_FAIL);
@@ -1279,6 +1285,7 @@ static inline int sockopt_msg_recv(int clt_fd, struct dpvs_sock_msg **pmsg)
 
     len = sizeof(msg_hdr);
     memset(&msg_hdr, 0, len);
+    // 读取消息头数据
     res = readn(clt_fd, &msg_hdr, len);
     if (sizeof(msg_hdr) != res) {
         RTE_LOG(WARNING, MSGMGR, "%s: sockopt msg header recv fail -- %d/%d recieved\n",
@@ -1299,6 +1306,7 @@ static inline int sockopt_msg_recv(int clt_fd, struct dpvs_sock_msg **pmsg)
     msg->type = msg_hdr.type;
     msg->len = msg_hdr.len;
 
+    // 读取消息体数据
     if (msg_hdr.len > 0) {
         res = readn(clt_fd, msg->data, msg->len);
         if (res != msg->len) {
@@ -1385,6 +1393,10 @@ static int sockopt_ctl(__rte_unused void *arg)
         return ret;
     }
 
+    /**
+    SOCKOPT_SET_IFADDR_ADD skopt = ifa_sockopts
+    SOCKOPT_SET_LADDR_ADD  skopt = laddr_sockopts
+     */
     skopt = sockopts_get(msg);
     if (skopt) {
         if (msg->type == SOCKOPT_GET)
@@ -1440,7 +1452,11 @@ static struct dpvs_lcore_job sockopt_job = {
 };
 
 /**
-使用socket domain实现进程间通信，以接受来自控制面的信息，
+使用socket domain实现进程间通信，默认通信地址是：/var/run/dpvs.ipc，
+以下服务通过这个socket通信：
+    1.ipvsadm
+    2.dpip
+    3.keepalived
 并通过 dpvs_lcore_job_register 注册循环任务，以实现实时接收信息。
  */
 static inline int sockopt_init(void)
@@ -1452,7 +1468,7 @@ static inline int sockopt_init(void)
     INIT_LIST_HEAD(&sockopt_list);
 
     memset(ipc_unix_domain, 0, sizeof(ipc_unix_domain));
-    strncpy(ipc_unix_domain, dpvs_ipc_file, sizeof(ipc_unix_domain) - 1);
+    strncpy(ipc_unix_domain, dpvs_ipc_file, sizeof(ipc_unix_domain) - 1); // dpvs_ipc_file的默认值：/var/run/dpvs.ipc
 
     srv_fd = socket(PF_UNIX, SOCK_STREAM, 0);
     if (srv_fd < 0) {
