@@ -4,5 +4,6 @@
     ],
     "remote.SSH.keepaliveInterval": 30000,
     "remote.SSH.useLocalServer": true,
-    "remote.SSH.showLoginTerminal": true
+    "remote.SSH.showLoginTerminal": true,
+    "remote.downloadExtensionsLocally": true
 }
