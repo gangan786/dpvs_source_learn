@@ -689,6 +689,7 @@ int neigh_output(int af, union inet_addr *nexhop,
         case DPVS_NUD_S_PROBE:
         case DPVS_NUD_S_DELAY:
             neigh_fill_mac(neighbour, m, NULL, port);
+            // 发送数据
             netif_xmit(m, neighbour->port);
 
             if (neighbour->state == DPVS_NUD_S_PROBE) {

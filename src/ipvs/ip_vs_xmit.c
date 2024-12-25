@@ -49,7 +49,10 @@ static int __dp_vs_fast_xmit_fnat4(struct dp_vs_proto *proto,
                  rte_is_zero_ether_addr(&conn->in_smac)))
         return EDPVS_NOTSUPP;
 
-    /* pre-handler before translation */
+    /* pre-handler before translation 
+    dp_vs_proto_tcp.fnat_in_pre_handler = null
+    dp_vs_proto_udp.fnat_in_pre_handler = udp_fnat_in_pre_handler
+    */
     if (proto->fnat_in_pre_handler) {
         err = proto->fnat_in_pre_handler(proto, conn, mbuf);
         if (err != EDPVS_OK)
@@ -62,10 +65,15 @@ static int __dp_vs_fast_xmit_fnat4(struct dp_vs_proto *proto,
         ip4h = ip4_hdr(mbuf);
     }
 
+    // 构建新的IP头
     ip4h->hdr_checksum = 0;
     ip4h->src_addr = conn->laddr.in.s_addr;
     ip4h->dst_addr = conn->daddr.in.s_addr;
 
+    /*
+    1. dp_vs_proto_tcp.fnat_in_handler = tcp_fnat_in_handler : 构建新的tcp头
+    2. dp_vs_proto_udp.fnat_in_handler = udp_fnat_in_handler
+     */
     if(proto->fnat_in_handler) {
         err = proto->fnat_in_handler(proto, conn, mbuf);
         if(err != EDPVS_OK)
@@ -74,11 +82,17 @@ static int __dp_vs_fast_xmit_fnat4(struct dp_vs_proto *proto,
     }
 
     if (likely(mbuf->ol_flags & PKT_TX_IP_CKSUM)) {
+        // 支持IPv4校验和的卸载offload
         ip4h->hdr_checksum = 0;
     } else {
         ip4_send_csum(ip4h);
     }
 
+    // 构建以太网头
+    /**
+    这里的 conn->in_dmac、conn->in_smac、conn->in_dev 究竟是在哪里设置的？
+    dp_vs_save_outxmit_info 方法有相关的设置，但他又是outbound方向的，和这里的inbound方向是不一样的。
+     */
     eth = (struct rte_ether_hdr *)rte_pktmbuf_prepend(mbuf,
                     (uint16_t)sizeof(struct rte_ether_hdr));
     rte_ether_addr_copy(&conn->in_dmac, &eth->d_addr);
@@ -172,7 +186,9 @@ static int __dp_vs_fast_outxmit_fnat4(struct dp_vs_proto *proto,
                  rte_is_zero_ether_addr(&conn->out_smac)))
         return EDPVS_NOTSUPP;
 
-    /* pre-handler before translation */
+    /* pre-handler before translation 
+    1. proto = dp_vs_proto_tcp.fnat_out_pre_handler = null
+    */
     if (proto->fnat_out_pre_handler) {
         err = proto->fnat_out_pre_handler(proto, conn, mbuf);
         if (err != EDPVS_OK)
@@ -189,6 +205,9 @@ static int __dp_vs_fast_outxmit_fnat4(struct dp_vs_proto *proto,
     ip4h->src_addr = conn->vaddr.in.s_addr;
     ip4h->dst_addr = conn->caddr.in.s_addr;
 
+    /*
+    1, proto = dp_vs_proto_tcp.fnat_out_handler = tcp_fnat_out_handler
+     */
     if(proto->fnat_out_handler) {
         err = proto->fnat_out_handler(proto, conn, mbuf);
         if(err != EDPVS_OK)
@@ -298,13 +317,16 @@ static void dp_vs_save_xmit_info(struct rte_mbuf *mbuf,
 
     port = netif_port_get(mbuf->port);
     if (port)
-        conn->out_dev = port;
+        conn->out_dev = port; // port是接收这个mbuf的端口，那么这个conn返回响应的dev也应该是这个？
 
+    // 前面已经将mbuf的data指向了IP头的位置，这里将他重新指向以太网头部
     eth = (struct rte_ether_hdr *)rte_pktmbuf_prepend(mbuf, mbuf->l2_len);
 
+    // inbound方向的源mac和目的mac，分别作为outbound方向的目的mac和源mac
     rte_ether_addr_copy(&eth->s_addr, &conn->out_dmac);
     rte_ether_addr_copy(&eth->d_addr, &conn->out_smac);
 
+    // 重新调整mbuf的位置到IP头
     rte_pktmbuf_adj(mbuf, sizeof(struct rte_ether_hdr));
 }
 
@@ -398,7 +420,9 @@ static int __dp_vs_xmit_fnat4(struct dp_vs_proto *proto,
     struct route_entry *rt;
     int err, mtu;
 
+    // 判断是否需要快速传输机制，默认开启快速传输，通过配置项：fast_xmit_close（dpvs/conf/dpvs.conf.items）
     if (!fast_xmit_close && !(conn->flags & DPVS_CONN_F_NOFASTXMIT)) {
+        // 在conn记录outbound相关的mac和dev
         dp_vs_save_xmit_info(mbuf, proto, conn);
         if (!dp_vs_fast_xmit_fnat(AF_INET, proto, conn, mbuf)) {
             return EDPVS_OK;

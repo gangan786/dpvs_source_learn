@@ -1,7 +1,9 @@
 # 简介
 此项目用于学习dpvs源码
 - 项目路径：`/home/app/dpvs`
-- 语言服务器: `clangd-14.0.0-1ubuntu1.1`
+- 语言服务器: `clangd-14.0.0-1ubuntu1.1`（vscode安装clangd插件对于查看源码很有帮助）
+# 源码分析
+1. [DPVS是怎么利用DPDK跑起来的](doc/学习笔记/DPVS是怎么利用DPDK跑起来的.md)
 ---
 
 ![Build](https://github.com/iqiyi/dpvs/workflows/Build/badge.svg)  ![Run](https://github.com/iqiyi/dpvs/workflows/Run/badge.svg)

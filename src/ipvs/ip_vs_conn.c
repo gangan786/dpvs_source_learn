@@ -1183,6 +1183,7 @@ void dp_vs_conn_put_no_reset(struct dp_vs_conn *conn)
 void dp_vs_conn_put(struct dp_vs_conn *conn)
 {
     if (conn->flags & DPVS_CONN_F_ONE_PACKET) {
+        // 对于one_packet模式，直接删除，不刷新timer
         dp_vs_conn_expire(conn);
         return;
     }

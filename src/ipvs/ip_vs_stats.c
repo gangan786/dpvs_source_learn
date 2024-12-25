@@ -50,6 +50,10 @@ int dp_vs_stats_add(struct dp_vs_stats *dst, struct dp_vs_stats *src)
     return EDPVS_OK;
 }
 
+/**
+统计inbound方向的数据包和字节数
+并做 limit_proportion 控制
+ */
 int dp_vs_stats_in(struct dp_vs_conn *conn, struct rte_mbuf *mbuf)
 {
     assert(conn && mbuf);
@@ -59,6 +63,7 @@ int dp_vs_stats_in(struct dp_vs_conn *conn, struct rte_mbuf *mbuf)
         /*limit rate*/
         if ((dest->limit_proportion < 100) &&
             (dest->limit_proportion > 0)) {
+            // 随机返回overload或者ok，limit_proportion越小，越可能返回overload
             return (rand()%100) > dest->limit_proportion
                         ? EDPVS_OVERLOAD : EDPVS_OK;
         }

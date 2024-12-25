@@ -386,6 +386,9 @@ static int xmit_outbound(struct rte_mbuf *mbuf,
         return INET_ACCEPT;
     }
 
+    /*
+    1. fullnat: packet_out_xmit = dp_vs_out_xmit_fnat
+    */
     err = conn->packet_out_xmit(prot, conn, mbuf);
     if (err != EDPVS_OK)
         RTE_LOG(DEBUG, IPVS, "%s: fail to out xmit: %d\n", __func__, err);
@@ -403,6 +406,7 @@ static int xmit_inbound(struct rte_mbuf *mbuf,
     int err;
     assert(mbuf && prot && conn);
 
+    // inbound方向的流量统计
     if (dp_vs_stats_in(conn, mbuf)) {
         dp_vs_conn_put(conn);
         return INET_DROP;
@@ -423,7 +427,7 @@ static int xmit_inbound(struct rte_mbuf *mbuf,
     }
 
     /* forward to RS 
-    dp_vs_xmit_fnat
+    1.fullnat: dp_vs_xmit_fnat
     */
     err = conn->packet_xmit(prot, conn, mbuf);
     if (err != EDPVS_OK)
@@ -952,7 +956,12 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
     struct dp_vs_iphdr iph;
     struct dp_vs_proto *prot;
     struct dp_vs_conn *conn;
-    int dir, verdict, err, related; /* dir表示方向？ */
+    /** 
+    dir表示方向，参考常规的互联网架构，
+    - DPVS_CONN_DIR_INBOUND表示客户端发往服务端的请求
+    - DPVS_CONN_DIR_OUTBOUND表示服务端对客户端的响应
+    */
+    int dir, verdict, err, related;
     bool drop = false;
     lcoreid_t cid, peer_cid;
     eth_type_t etype = mbuf->packet_type; /* FIXME: use other field ? */
@@ -1093,7 +1102,9 @@ static int __dp_vs_in(void *priv, struct rte_mbuf *mbuf,
         }
     }
 
+    // 1. dp_vs_proto_tcp.state_trans = tcp_state_trans
     if (prot->state_trans) {
+        // 维护conn->state状态机流转
         err = prot->state_trans(prot, conn, mbuf, dir);
         if (err != EDPVS_OK)
             RTE_LOG(WARNING, IPVS, "%s: fail to trans state.", __func__);

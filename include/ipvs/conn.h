@@ -95,7 +95,7 @@ struct dp_vs_conn {
     uint16_t                dport;
 
     struct rte_mempool      *connpool; /* 表明当前dp_vs_conn对象被alloc的内存池 */
-    struct conn_tuple_hash  tuplehash[DPVS_CONN_DIR_MAX];
+    struct conn_tuple_hash  tuplehash[DPVS_CONN_DIR_MAX]; // 以数组为下标标记inbound还是outbound
     rte_atomic32_t          refcnt;
     struct dpvs_timer       timer;
     struct timeval          timeout;

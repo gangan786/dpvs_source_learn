@@ -234,6 +234,7 @@ int INET_HOOK(int af, unsigned int hook, struct rte_mbuf *mbuf,
     int verdict = INET_ACCEPT; // INET_ACCEPT表示mbuf符合要求已被处理
 
     state.hook = hook;
+    // 根据hook获取拓展函数，用于自定义场景拓展，系统自带的hook只有: INET_HOOK_PRE_ROUTING ，定义在: dp_vs_ops
     hook_list = af_inet_hooks(af, hook);
 
     ops = list_entry(hook_list, struct inet_hook_ops, list);
@@ -243,11 +244,12 @@ int INET_HOOK(int af, unsigned int hook, struct rte_mbuf *mbuf,
         list_for_each_entry_continue(ops, hook_list, list) {
 repeat:
             /*
-            ops的值有: dp_vs_ops
-             对于ipv4协议：af=AF_INET、路由转发前：hook=INET_HOOK_PRE_ROUTING 来说
-             ops->hook()有两个实现方法，循环会依次调用 -> dp_vs_pre_routing  dp_vs_in
-             
-             */
+            ops的值有: dp_vs_ops （有此仅有一个）
+             1.对于ipv4协议即af=AF_INET、路由转发前：hook=INET_HOOK_PRE_ROUTING 来说
+               ops->hook()有两个实现方法，循环会依次调用 -> dp_vs_pre_routing  dp_vs_in
+             2.对于ipv6协议即af=AF_INET6、路由转发前：hook=INET_HOOK_PRE_ROUTING 来说
+               ops->hook()有两个实现方法，循环会依次调用 -> dp_vs_pre_routing6  dp_vs_in6
+            */
             verdict = ops->hook(ops->priv, mbuf, &state);
             if (verdict != INET_ACCEPT) {
                 if (verdict == INET_REPEAT)
@@ -257,6 +259,7 @@ repeat:
         }
     }
 
+    // 对于没有定义hook的场景，直接调用okfn
     if (verdict == INET_ACCEPT || verdict == INET_STOP) {
         return okfn(mbuf);
     } else if (verdict == INET_DROP) {

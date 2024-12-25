@@ -31,13 +31,14 @@
 
 /*
  * Inet Hooks
+ * 以 INET_HOOK_* 为下标的数组，用于保存每个阶段需要执行的函数
  */
 enum {
-    INET_HOOK_PRE_ROUTING, // 以 INET_HOOK_* 为下标的数组，用于保存每个阶段需要执行的函数
-    INET_HOOK_LOCAL_IN,
-    INET_HOOK_FORWARD,
-    INET_HOOK_LOCAL_OUT,
-    INET_HOOK_POST_ROUTING,
+    INET_HOOK_PRE_ROUTING,  // 数据包刚到达网络接口，尚未进行路由决策
+    INET_HOOK_LOCAL_IN,     // 数据包已通过路由决策，目的地是本机
+    INET_HOOK_FORWARD,      // 数据包已通过路由决策，目的地不是本机，需要转发
+    INET_HOOK_LOCAL_OUT,    // 数据包从本机生成，准备发送出去
+    INET_HOOK_POST_ROUTING, // 数据包已经过路由决策，即将离开网络接口
     INET_HOOK_NUMHOOKS,
 };
 

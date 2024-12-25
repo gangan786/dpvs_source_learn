@@ -212,9 +212,18 @@ static inline uint32_t seq_scale(uint32_t seq)
 {
     struct timespec now;
 
+    // 获取从系统启动开始计时的单调时钟时间
     clock_gettime(CLOCK_MONOTONIC, &now);
 
     /* 64 ns as kernel */
+    /**
+    1. now.tv_sec * 1000000000L 将秒数转换为纳秒数。
+    2. now.tv_nsec 直接是纳秒数。
+    3. 将两者相加得到总的纳秒数。
+    4. >> 6 表示将总纳秒数右移6位，相当于除以64，从而得到以64纳秒为单位的时间偏移量。
+    5. 最后将这个偏移量加到 seq 上，返回一个新的序列号。
+    这种做法通常用于生成一个基于当前时间的安全序列号，确保每个生成的序列号在一定时间内是唯一的，并且难以预测。
+     */
     return seq + ((now.tv_sec * 1000000000L + now.tv_nsec) >> 6);
 }
 
@@ -250,16 +259,19 @@ static inline void tcp_in_init_seq(struct dp_vs_conn *conn,
 
     if (fseq->isn)
         return;
-
+    
+    // 根据连接信息生成一个安全且唯一的初始序列号。
     fseq->isn = tcp_secure_sequence_number(conn->laddr.in.s_addr,
             conn->daddr.in.s_addr, conn->lport, conn->dport);
 
+    // 通过fseq->isn - fseq->delta 能得到原来的seq
     fseq->delta = fseq->isn - seq;
     return;
 }
 
 void tcp_in_adjust_seq(struct dp_vs_conn *conn, struct tcphdr *th)
 {
+    // 如果是syn包的时候，此时的seq的结果就是 tcp_in_init_seq 里面描述的fseq->isn的值
     th->seq = htonl(ntohl(th->seq) + conn->fnat_seq.delta);
     /* recalc checksum later */
     /* adjust ack_seq for synproxy,including tcp hdr and sack opt */
@@ -273,17 +285,25 @@ static void tcp_in_remove_ts(struct tcphdr *tcph)
     unsigned char *ptr;
     int len, i;
 
+    // 指向TCP头部之后的第一个选项
     ptr = (unsigned char *)(tcph + 1);
+    // TCP头部之后的选项的长度
     len = (tcph->doff << 2) - sizeof(struct tcphdr);
 
     while (len > 0) {
+        /**
+        opcode(1 byte)：tcp选项类型
+        opsize(1 byte)：tcp选项的长度（包括opcode和opsize）
+         */
         int opcode = *ptr++;
         int opsize;
 
         switch (opcode) {
         case TCP_OPT_EOL:
+            // EOL (End of Options List)：遇到EOL直接返回，表示选项列表结束
             return;
         case TCP_OPT_NOP:
+            // NOP (No Operation)：跳过NOP选项，继续下一个选项
             len--;
             continue;
         default:
@@ -294,12 +314,20 @@ static void tcp_in_remove_ts(struct tcphdr *tcph)
                 return;    /* partial options */
             if ((opcode == TCP_OPT_TIMESTAMP)
                     && (opsize == TCP_OLEN_TIMESTAMP)) {
+                /* 
+                时间戳的opcode是8，opsize是10（包括opcode和opsize本身）
+                找到时间戳选项，将其替换成TCP_OPT_NOP，并将时间戳的值也替换成1，
+                最终的效果就是这里多了10个NOP选项
+                时间戳的值由8个字节，这是他们的组成
+                - Timestamp Value (TSval): 4字节，发送方的时间戳计数器的当前值
+                - Timestamp Echo Reply (TSecr): 4字节，最近接收到的对端TSval的回显
+                */
                 for (i = 0; i < TCP_OLEN_TIMESTAMP; i++)
                     *(ptr - 2 + i) = TCP_OPT_NOP;
                 return;
             }
 
-            ptr += opsize - 2;
+            ptr += opsize - 2; // opsize - 2 才是数据部分的长度
             len -= opsize;
             break;
         }
@@ -767,7 +795,12 @@ static int tcp_conn_sched(struct dp_vs_proto *proto,
         return EDPVS_PKTSTOLEN;
     }
 
-    /* only TCP-SYN without other flag can be scheduled */
+    /* only TCP-SYN without other flag can be scheduled : 只有syn的数据包能被scheduled调度，其他的flag一律丢弃
+    下面的丢弃策略表明，当没有经过完整的tcp握手的情况下，dpvs是不会对数据包进行处理的，做丢弃处理，
+    换句话说，客户端只有先发送syn包之后，才能享受dpvs的功能，
+    三次握手是tcp必备的一个过程，那为什么上面还要这样强调呢？我们可以考虑这么一个场景，主备两台dpvs发生切换的时候，
+    就会发生syn是master接收，主备切换的时候，ack就到了backup，但此时由于下面的这个逻辑这个ack就会被丢弃，可能造成服务异常
+    */
     if (!th->syn || th->ack || th->fin || th->rst) {
 #ifdef CONFIG_DPVS_IPVS_DEBUG
         char dbuf[64], sbuf[64];
@@ -950,12 +983,14 @@ static int tcp_fnat_in_handler(struct dp_vs_proto *proto,
         }
     }
 
+    // 填充tcp序号seq
     tcp_in_adjust_seq(conn, th);
 
     /* L4 translation */
     th->source  = conn->lport;
     th->dest    = conn->dport;
 
+    // 填充tcp校验和check
     return tcp_send_csum(af, iphdrlen, th, conn, mbuf, conn->in_dev);
 }
 

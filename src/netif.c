@@ -2308,6 +2308,7 @@ int netif_hard_xmit(struct rte_mbuf *mbuf, struct netif_port *dev)
         return ret;
     }
 
+    // 添加vlane标签
     if (unlikely((ret = validate_xmit_mbuf(mbuf, dev)) != EDPVS_OK)) {
         RTE_LOG(WARNING, NETIF, "%s: validate_xmit_mbuf error\n", __func__);
         rte_pktmbuf_free(mbuf);
@@ -2381,6 +2382,12 @@ static inline eth_type_t eth_type_parse(const struct rte_ether_hdr *eth_hdr,
     if (eth_addr_equal(&dev->addr, &eth_hdr->d_addr))
         return ETH_PKT_HOST;
 
+    /* 
+    这里有点奇怪，按照多播和广播地址的定义，不应该是先判断是否多播再判断广播，
+    他两都不兼容，也就是说加入是多播就一定不是广播，里面的广播判断就没有必要了
+    mac广播地址：ff:ff:ff:ff:ff:ff
+    mac多播地址：01:00:5e:xx:xx:xx
+    */
     if (rte_is_multicast_ether_addr(&eth_hdr->d_addr)) {
         if (rte_is_broadcast_ether_addr(&eth_hdr->d_addr))
             return ETH_PKT_BROADCAST;
@@ -2595,6 +2602,7 @@ void lcore_process_packets(struct rte_mbuf **mbufs, lcoreid_t cid, uint16_t coun
             lcore_stats[cid].dropped++;
             continue;
         }
+        // bonding聚合类型的端口，实际处理对应的设备是master
         if (dev->type == PORT_TYPE_BOND_SLAVE) {
             dev = dev->bond->slave.master;
             mbuf->port = dev->id;
