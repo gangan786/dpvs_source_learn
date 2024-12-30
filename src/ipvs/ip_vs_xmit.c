@@ -92,6 +92,7 @@ static int __dp_vs_fast_xmit_fnat4(struct dp_vs_proto *proto,
     /**
     这里的 conn->in_dmac、conn->in_smac、conn->in_dev 究竟是在哪里设置的？
     dp_vs_save_outxmit_info 方法有相关的设置，但他又是outbound方向的，和这里的inbound方向是不一样的。
+    从流程上来说，刚建立的conn并没有这些值，当outbound响应了的时候，就会通过dp_vs_save_outxmit_info设置这些值
      */
     eth = (struct rte_ether_hdr *)rte_pktmbuf_prepend(mbuf,
                     (uint16_t)sizeof(struct rte_ether_hdr));
@@ -317,7 +318,7 @@ static void dp_vs_save_xmit_info(struct rte_mbuf *mbuf,
 
     port = netif_port_get(mbuf->port);
     if (port)
-        conn->out_dev = port; // port是接收这个mbuf的端口，那么这个conn返回响应的dev也应该是这个？
+        conn->out_dev = port; // port是接收这个mbuf的端口，那么这个conn返回响应的dev也应该是这个
 
     // 前面已经将mbuf的data指向了IP头的位置，这里将他重新指向以太网头部
     eth = (struct rte_ether_hdr *)rte_pktmbuf_prepend(mbuf, mbuf->l2_len);
@@ -420,11 +421,17 @@ static int __dp_vs_xmit_fnat4(struct dp_vs_proto *proto,
     struct route_entry *rt;
     int err, mtu;
 
+    /**
+     * fast_xmit机制的意思是，通过conn缓存的mac地址和dev，直接将数据包构建好放到对应的发送队列，而不用通过route和neighbour查找
+     * 当然，如果是第一次接受到数据包，那么还是要通过route和neighbour查找mac和dev，但是后续的包直接通过fast_xmit机制就可以发送出去了
+     */
     // 判断是否需要快速传输机制，默认开启快速传输，通过配置项：fast_xmit_close（dpvs/conf/dpvs.conf.items）
     if (!fast_xmit_close && !(conn->flags & DPVS_CONN_F_NOFASTXMIT)) {
         // 在conn记录outbound相关的mac和dev
         dp_vs_save_xmit_info(mbuf, proto, conn);
+        // 当tcp/udp的第一个包走到这里的时候，会因为conn中的这些属性（in_dev、in_dmac、in_smac）没有值而返回EDPVS_NOROUTE，进而 跳过fast_xmit
         if (!dp_vs_fast_xmit_fnat(AF_INET, proto, conn, mbuf)) {
+            // 返回EDPVS_OK说明fast_xmit快速传输成功，不再需要需要下面的路由信息处理
             return EDPVS_OK;
         }
     }
@@ -443,6 +450,7 @@ static int __dp_vs_xmit_fnat4(struct dp_vs_proto *proto,
     fl4.fl4_daddr = conn->daddr.in;
     fl4.fl4_saddr = conn->laddr.in;
     fl4.fl4_tos = iph->type_of_service;
+    // 根据目的IP寻找路由配置
     rt = route4_output(&fl4);
     if (!rt) {
         err = EDPVS_NOROUTE;
@@ -453,6 +461,7 @@ static int __dp_vs_xmit_fnat4(struct dp_vs_proto *proto,
      * didn't cache the pointer to rt
      * or route can't be deleted when there is conn ref
      * this is for neighbour confirm
+     * 将路由rt的信息保存在conn->in_dev、in_nexthop
      */
     dp_vs_conn_cache_rt(conn, rt, true);
 
@@ -465,6 +474,7 @@ static int __dp_vs_xmit_fnat4(struct dp_vs_proto *proto,
         goto errout;
     }
 
+    // 将路由信息缓存到mbuf的自定义字段中，方便后续处理
     MBUF_USERDATA(mbuf, struct route_entry *, MBUF_FIELD_ROUTE) = rt;
 
     /* after route lookup and before translation */
@@ -478,7 +488,10 @@ static int __dp_vs_xmit_fnat4(struct dp_vs_proto *proto,
         iph->time_to_live--;
     }
 
-    /* pre-handler before translation */
+    /* pre-handler before translation 
+    dp_vs_proto_tcp.fnat_in_pre_handler = null
+    dp_vs_proto_udp.fnat_in_pre_handler = udp_fnat_in_pre_handler
+    */
     if (proto->fnat_in_pre_handler) {
         err = proto->fnat_in_pre_handler(proto, conn, mbuf);
         if (err != EDPVS_OK)
@@ -497,6 +510,10 @@ static int __dp_vs_xmit_fnat4(struct dp_vs_proto *proto,
     iph->dst_addr = conn->daddr.in.s_addr;
 
     /* L4 FNAT translation */
+    /*
+    1. dp_vs_proto_tcp.fnat_in_handler = tcp_fnat_in_handler : 构建新的tcp头
+    2. dp_vs_proto_udp.fnat_in_handler = udp_fnat_in_handler
+     */
     if (proto->fnat_in_handler) {
         err = proto->fnat_in_handler(proto, conn, mbuf);
         if (err != EDPVS_OK)
@@ -510,6 +527,7 @@ static int __dp_vs_xmit_fnat4(struct dp_vs_proto *proto,
         ip4_send_csum(iph);
     }
 
+    // ip头、tcp/udp头处理好了，现在要处理以太网头。由于这里没有配置hook:INET_HOOK_LOCAL_OUT，所以进入ipv4_output函数
     return INET_HOOK(AF_INET, INET_HOOK_LOCAL_OUT, mbuf,
                      NULL, rt->port, ipv4_output);
 

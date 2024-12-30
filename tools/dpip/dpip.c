@@ -225,6 +225,9 @@ int main(int argc, char *argv[])
     if (parse_args(argc, argv, &conf) != 0)
         exit(1);
 
+    /**
+    route: dpip_route
+     */
     if ((obj = dpip_obj_get(conf.obj)) == NULL) {
         fprintf(stderr, "%s: invalid object, use `-h' for help.\n", prog);
         exit(1);

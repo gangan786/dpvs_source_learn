@@ -39,6 +39,7 @@
         s != NULL; \
         s = n, n = s ? s->next : NULL)
 
+// 获取mbuf自定义字段的数据
 #define MBUF_USERDATA(m, type, field) \
     (*((type *)(mbuf_userdata((m), (field)))))
 

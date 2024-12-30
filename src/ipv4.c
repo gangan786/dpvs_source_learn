@@ -222,8 +222,9 @@ static int ipv4_output_fin2(struct rte_mbuf *mbuf)
     struct in_addr nexthop;
 
     rt = MBUF_USERDATA(mbuf, struct route_entry *, MBUF_FIELD_ROUTE);
+    // 判断route是否配置了网关
     if (rt->gw.s_addr == htonl(INADDR_ANY))
-        nexthop.s_addr = ip4_hdr(mbuf)->dst_addr;
+        nexthop.s_addr = ip4_hdr(mbuf)->dst_addr; // 没有网关，下一跳地址直接设为目的地址
     else
         nexthop = rt->gw;
 

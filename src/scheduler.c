@@ -227,7 +227,7 @@ static int dpvs_job_loop(void *arg)
 #ifdef CONFIG_RECORD_BIG_LOOP
         loop_start = rte_get_timer_cycles();
 #endif
-        ++this_poll_tick;
+        ++this_poll_tick; // 用于控制任务类型为：LCORE_JOB_SLOW的执行频次
         netif_update_worker_loop_cnt();
 
         /* do normal job */

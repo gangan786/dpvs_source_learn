@@ -375,6 +375,10 @@ struct route_entry *route4_input(const struct rte_mbuf *mbuf,
                                 const struct netif_port *port
                                 )
 {
+    /**
+     * route_in_net_lookup 和 route_local_lookup 的区别是：
+     * dpip添加路由时的作用域不同，存在不同的地方，参考 route_add_lcore
+     */
     struct route_entry *route;
     route = route_local_lookup(daddr->s_addr, port);
     if (route){

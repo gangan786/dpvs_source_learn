@@ -85,6 +85,7 @@ static struct nud_state nud_states[] = {
 /* params from config file */
 static int arp_unres_qlen = NEIGH_ENTRY_BUFF_SIZE_DEF;
 
+// 存储待处理的路由neighbour配置
 static struct rte_ring *neigh_ring[DPVS_MAX_LCORE] = {NULL, };
 
 static void unres_qlen_handler(vector_t tokens)
@@ -145,6 +146,7 @@ void install_neighbor_keywords(void)
 
 static lcoreid_t master_cid = 0;
 
+// 邻居表，可以理解成路由器中通过arp协议形成的ip-mac地址映射表
 static struct list_head neigh_table[DPVS_MAX_LCORE][NEIGH_TAB_SIZE];
 
 static struct raw_neigh *neigh_ring_clone_entry(const struct neighbour_entry *neighbour,
@@ -244,6 +246,9 @@ static inline int neigh_unhash(struct neighbour_entry *neighbour)
     return EDPVS_NOTEXIST;
 }
 
+/**
+ * 比较IP和port是否和neighbour中的一致
+ */
 static inline bool neigh_key_cmp(int af, const struct neighbour_entry *neighbour,
                                  const union inet_addr *key, const struct netif_port *port)
 {
@@ -373,6 +378,7 @@ struct neighbour_entry *neigh_add_table(int af, const union inet_addr *ipaddr,
     new_neighbour->af   = af;
 
     if (eth_addr) {
+        // 如果eth_addr有值，表明这个mac表项是可达的
         rte_memcpy(&new_neighbour->eth_addr, eth_addr, 6);
         new_neighbour->state = DPVS_NUD_S_REACHABLE;
     } else {
@@ -390,6 +396,7 @@ struct neighbour_entry *neigh_add_table(int af, const union inet_addr *ipaddr,
 #ifdef CONFIG_TIMER_DEBUG
         snprintf(new_neighbour->timer.name, sizeof(new_neighbour->timer.name), "%s", "neigh");
 #endif
+        // 创建定时器流转neighbour的状态
         dpvs_time_rand_delay(&delay, 200000); /* delay 200ms randomly to avoid timer performance problem */
         dpvs_timer_sched(&new_neighbour->timer, &delay,
                 neighbour_timer_event, new_neighbour, false);
@@ -474,10 +481,12 @@ static void neigh_state_confirm(struct neighbour_entry *neighbour)
 
     if (neighbour->af == AF_INET) {
         daddr.in.s_addr = neighbour->ip_addr.in.s_addr;
+        // 获取 saddr
         inet_addr_select(AF_INET, neighbour->port, &daddr, 0, &saddr);
         if (!saddr.in.s_addr)
             RTE_LOG(ERR, NEIGHBOUR, "%s: no source ip\n", __func__);
 
+        // 发送arp探测
         if (neigh_send_arp(neighbour->port, saddr.in.s_addr,
                            daddr.in.s_addr) != EDPVS_OK)
             RTE_LOG(ERR, NEIGHBOUR, "%s: send arp failed\n", __func__);
@@ -511,7 +520,7 @@ int neigh_resolve_input(struct rte_mbuf *m, struct netif_port *port)
 
     if (rte_be_to_cpu_16(arp->arp_opcode) == RTE_ARP_OP_REQUEST) {
         rte_ether_addr_copy(&eth->s_addr, &eth->d_addr);
-        rte_memcpy(&eth->s_addr, &port->addr, 6);
+        rte_memcpy(&eth->s_addr, &port->addr, 6); // 获取本port的mac地址
         arp->arp_opcode = rte_cpu_to_be_16(RTE_ARP_OP_REPLY);
 
         rte_ether_addr_copy(&arp->arp_data.arp_sha, &arp->arp_data.arp_tha);
@@ -531,6 +540,7 @@ int neigh_resolve_input(struct rte_mbuf *m, struct netif_port *port)
         hashkey = neigh_hashkey(AF_INET, (union inet_addr *)&ipaddr, port);
         neighbour = neigh_lookup_entry(AF_INET, (union inet_addr *)&ipaddr,
                                        port, hashkey);
+        // 将获取到的IP和对应的mac地址填充到 neigh_table 邻居表
         if (neighbour && !(neighbour->flag & NEIGHBOUR_STATIC)) {
             neigh_edit(neighbour, &arp->arp_data.arp_sha);
         } else {
@@ -543,6 +553,7 @@ int neigh_resolve_input(struct rte_mbuf *m, struct netif_port *port)
             }
         }
         neigh_entry_state_trans(neighbour, 1);
+        // 将之前由于缺失mac信息而缓存起来的mbuf发送出去
         neigh_send_mbuf_cach(neighbour);
         return EDPVS_KNICONTINUE;
     } else {
@@ -568,17 +579,23 @@ static int neigh_send_arp(struct netif_port *port, uint32_t src_ip, uint32_t dst
     eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
     arp = (struct rte_arp_hdr *)&eth[1];
 
+    // 将目的mac填充为广播地址：ff:ff:ff:ff:ff:ff
     memset(&eth->d_addr, 0xFF, 6);
+    // 填充本端口mac为源mac
     rte_ether_addr_copy(&port->addr, &eth->s_addr);
     eth->ether_type = htons(RTE_ETHER_TYPE_ARP);
 
     memset(arp, 0, sizeof(struct rte_arp_hdr));
+    // 发送方硬件地址（Sender Hardware Address, SHA）
     rte_memcpy(&arp->arp_data.arp_sha, &port->addr, 6);
     addr = src_ip;
+    // 发送方协议地址（Sender IP Address, SIP）
     inetAddrCopy(&arp->arp_data.arp_sip, &addr);
 
+    // 目标硬件地址（Target Hardware Address, THA）设置为全0
     memset(&arp->arp_data.arp_tha, 0, 6);
     addr = dst_ip;
+    // 目标协议地址（Target IP Address, TIP）
     inetAddrCopy(&arp->arp_data.arp_tip, &addr);
 
     arp->arp_hardware = htons(RTE_ARP_HRD_ETHER);
@@ -688,6 +705,7 @@ int neigh_output(int af, union inet_addr *nexhop,
         case DPVS_NUD_S_REACHABLE:
         case DPVS_NUD_S_PROBE:
         case DPVS_NUD_S_DELAY:
+            // 填充mac地址
             neigh_fill_mac(neighbour, m, NULL, port);
             // 发送数据
             netif_xmit(m, neighbour->port);
@@ -717,11 +735,12 @@ int neigh_output(int af, union inet_addr *nexhop,
         rte_pktmbuf_free(m);
         return EDPVS_DROP;
     }
-    m_buf->m = m;
+    m_buf->m = m; // 缓存待发送的mbuf，在获取neighbour成功后才会调用 neigh_send_mbuf_cach 发送
     list_add_tail(&m_buf->neigh_mbuf_list, &neighbour->queue_list);
     neighbour->que_num++;
 
     if (neighbour->state == DPVS_NUD_S_NONE) {
+        // 对于初始状态的neighbour，发送arp探测mac并流转neighbour状态
         neigh_state_confirm(neighbour);
         neigh_entry_state_trans(neighbour, 0);
     }
@@ -817,6 +836,7 @@ static void neigh_process_ring(void *arg)
 
     if (unlikely(NULL == neigh_ring[cid]))
         return;
+    // enqueue的位置在: neigh_sync_core
     nb_rb = rte_ring_dequeue_burst(neigh_ring[cid], (void **)params,
                                    NETIF_MAX_PKT_BURST, NULL);
     if (nb_rb > 0) {
@@ -840,7 +860,7 @@ static void neigh_process_ring(void *arg)
                    neigh_entry_state_trans(neigh, 1);
                neigh_send_mbuf_cach(neigh);
            } else {
-               if (neigh) {
+               if (neigh) { // delete neighbour
                    struct neighbour_mbuf_entry *mbuf, *mbuf_next;
                    if (!(neigh->flag & NEIGHBOUR_STATIC))
                        dpvs_timer_cancel(&neigh->timer, false);
@@ -1011,6 +1031,9 @@ static int neigh_sockopt_get(sockoptid_t opt, const void *conf,
     return EDPVS_OK;
 }
 
+/**
+ * kind表示neigh来源， NEIGH_PARAM 来自 neigh_sockopt_set
+ */
 int neigh_sync_core(const void *param, bool add_del, enum param_kind kind)
 {
     struct raw_neigh *mac_param;

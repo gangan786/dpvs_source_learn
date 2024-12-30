@@ -24,9 +24,9 @@
 #include "conf/sockopts.h"
 
 enum {
-    DPVS_NUD_S_NONE        = 0,
+    DPVS_NUD_S_NONE        = 0, // neighbour的初始化状态，new_neighbour->eth_addr还是没有值的
     DPVS_NUD_S_SEND,
-    DPVS_NUD_S_REACHABLE,
+    DPVS_NUD_S_REACHABLE,       // 表明new_neighbour->eth_addr有值，mac是有效的
     DPVS_NUD_S_PROBE,
     DPVS_NUD_S_DELAY,
     DPVS_NUD_S_MAX /*Reserved*/

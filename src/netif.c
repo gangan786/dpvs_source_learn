@@ -2515,7 +2515,7 @@ int netif_rcv_mbuf(struct netif_port *dev, lcoreid_t cid, struct rte_mbuf *mbuf,
                         __func__, i);
                 continue;
                 }
-                // 将arp协议的数据包放进每个lcore的arp_ring中
+                // 将arp协议的数据包放进除master_lcore和本core外的每个lcore的arp_ring中，然后这些lcore就能在循环任务中也处理arp，形成pre_locre的邻居表
                 err = rte_ring_enqueue(arp_ring[i], mbuf_clone);
                 if (unlikely(-EDQUOT == err)) {
                     RTE_LOG(WARNING, NETIF, "%s: arp ring of lcore %d quota exceeded\n",
@@ -2538,9 +2538,9 @@ int netif_rcv_mbuf(struct netif_port *dev, lcoreid_t cid, struct rte_mbuf *mbuf,
 
     /* 
     针对不同的ether_type（0x0800：IPv4、0x0806：ARP、0x86DD：IPv6）调用不同的处理函数
-    &ip4_pkt_type.func = ipv4_rcv
-    &ip6_pkt_type.func = ip6_rcv
-    &arp_pkt_type.func = neigh_resolve_input
+    ipv4处理: &ip4_pkt_type.func = ipv4_rcv
+    ipv6处理: &ip6_pkt_type.func = ip6_rcv
+    arp协议包处理: &arp_pkt_type.func = neigh_resolve_input
     */
     err = pt->func(mbuf, dev);
 
@@ -2655,7 +2655,7 @@ static void lcore_job_recv_fwd(void *arg)
         for (j = 0; j < lcore_conf[lcore2index[cid]].pqs[i].nrxq; j++) {
             // 遍历当前nic端口对应的rx队列
             qconf = &lcore_conf[lcore2index[cid]].pqs[i].rxqs[j];
-            // 提前处理 arp_ring 队列
+            // 提前处理 arp_ring 队列，用于处理arp请求形成邻居表
             lcore_process_arp_ring(cid);
             // 提前处理 dp_vs_redirect_ring 队列
             lcore_process_redirect_ring(cid);

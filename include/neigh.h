@@ -53,12 +53,12 @@
 struct neighbour_entry {
     int                 af;
     struct list_head    neigh_list;
-    union inet_addr     ip_addr;
-    struct rte_ether_addr   eth_addr;
+    union inet_addr     ip_addr;    // arp邻居表对应的ip地址
+    struct rte_ether_addr  eth_addr;// arp邻居表对应的mac地址
     struct netif_port   *port;
     struct dpvs_timer   timer;
-    struct list_head    queue_list;
-    uint32_t            que_num;
+    struct list_head    queue_list; // 保存neighbour_mbuf_entry节点，用于缓存待发送mbuf
+    uint32_t            que_num;    // neighbour_mbuf_entry节点的数量
     uint32_t            state;
     uint32_t            ts;
     uint8_t             flag;

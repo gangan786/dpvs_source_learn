@@ -32,6 +32,7 @@
 #define RTE_LOGTYPE_EMBUF    RTE_LOGTYPE_USER1
 
 #define MBUF_DYNFIELDS_MAX   8
+// mbuf_dynfields_offset在 mbuf_init 完成了初始化，记录了mbuf中自定义字段的偏移量
 static int mbuf_dynfields_offset[MBUF_DYNFIELDS_MAX];
 
 void *mbuf_userdata(struct rte_mbuf *mbuf, mbuf_usedata_field_t field)
