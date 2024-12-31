@@ -1,9 +1,22 @@
 # 简介
 此项目用于学习dpvs源码
-- 项目路径：`/home/app/dpvs`
+- 项目路径：[dpvs_source_learn](https://github.com/gangan786/dpvs_source_learn)
+- 安装路径：`/home/app/dpvs`
 - 语言服务器: `clangd-14.0.0-1ubuntu1.1`（vscode安装clangd插件对于查看源码很有帮助）
+
 # 源码分析
-1. [DPVS是怎么利用DPDK跑起来的](doc/学习笔记/DPVS是怎么利用DPDK跑起来的.md)
+1. [DPVS是怎么利用DPDK跑起来的](doc/学习笔记/1.DPVS是怎么利用DPDK跑起来的.md)
+2. [DPVS收到数据包以后怎么发送出去](doc/学习笔记/2.DPVS收到数据包以后怎么发送出去.md)
+
+
+填坑系类
+- DPVS是怎么利用synProxy抵御syn泛洪攻击的
+- DPVS是怎么在fullNat模式下做到inbound和outbound都被同一个lcore处理的
+- DPVS是如何支持QUIC协议做到连接迁移
+- DPVS故障发生主从切换时对长连接服务的影响
+
+如果学习有所收获的同学，欢迎点亮 ⭐️
+
 ---
 
 ![Build](https://github.com/iqiyi/dpvs/workflows/Build/badge.svg)  ![Run](https://github.com/iqiyi/dpvs/workflows/Run/badge.svg)
