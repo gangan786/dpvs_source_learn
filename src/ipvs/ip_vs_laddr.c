@@ -184,9 +184,10 @@ int dp_vs_laddr_bind(struct dp_vs_conn *conn, struct dp_vs_service *svc)
     /*
      * some time allocate lport fails for one laddr,
      * but there's also some resource on another laddr.
+     * 一个dp_vs_service可能会配置多个localIP，这里遍历所以localIP直到成功获取localPort
      */
     for (i = 0; i < dp_vs_laddr_max_trails && i < svc->num_laddrs; i++) {
-        /* select a local IP from service */
+        /* select a local IP from service 这里会做laddr的轮训*/
         laddr = __get_laddr(svc);
         if (!laddr) {
             RTE_LOG(ERR, IPVS, "%s: no laddr available.\n", __func__);

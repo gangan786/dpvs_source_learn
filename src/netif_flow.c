@@ -157,7 +157,7 @@ static int netif_flow_create(struct netif_port *dev,
 
     /*
     为什么dev->type 有PORT_TYPE_BOND_MASTER和PORT_TYPE_BOND_SLAVE的分别?
-    answer: relate_bonding_device
+    answer: relate_bonding_device 聚合网卡，防止单点网卡故障
     */ 
     if (dev->type == PORT_TYPE_BOND_MASTER) {
         // 对bonding聚合网卡做flow设置

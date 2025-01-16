@@ -62,6 +62,7 @@ int dpvs_ctrl_init(lcoreid_t cid)
 
     dpvs_ctrl_func = dpvs_ctrl_init;
 
+    // 初始化dpvs_ipc_file地址，默认/var/run/dpvs.ipc
 	dpvs_sockopt_init();
 
 #if !HAVE_DECL_SOCK_CLOEXEC

@@ -102,7 +102,7 @@ static int sa_pool_alloc_hash(struct sa_pool *ap, uint8_t hash_sz,
     sa_entry_pool_size = sizeof(struct sa_entry_pool) * hash_sz; // 这个是sa_entry_pool所需要的空间
     sa_entry_size = sizeof(struct sa_entry) * sa_entry_num * hash_sz; // 这个是sa_entry所需要的空间
 
-    /* pool_hash是个sa_entry_pool数组，需要hash_sz个sa_entry_pool，而每个sa_entry_pool又需要sa_entry个sa_entry，
+    /* pool_hash是个sa_entry_pool数组，需要hash_sz个sa_entry_pool，而每个sa_entry_pool又需要sa_entry_num个sa_entry，
     所以需要计算出sa_entry_pool_size+sa_entry_size，这样sa_entry_pool和sa_entry就能放在同一块内存上
     */
     ap->pool_hash = rte_malloc(NULL, sa_entry_pool_size + sa_entry_size,
@@ -118,7 +118,7 @@ static int sa_pool_alloc_hash(struct sa_pool *ap, uint8_t hash_sz,
      虽然可以优化，但是考虑这个使用场景并不是频繁的，而且下面这个代码可读性也是比较好的，所以也还行。。。┓( ´∀` )┏
      */
     for (hash = 0; hash < hash_sz; hash++) {
-        // 遍历ap的sa_entry_pool数组
+        // 遍历ap的sa_entry_pool数组，每个元素的构建结果都是相同的
         pool = &ap->pool_hash[hash];
 
         INIT_LIST_HEAD(&pool->used_enties);
@@ -172,6 +172,7 @@ static int sa_pool_add_filter(struct inet_ifaddr *ifa, struct sa_pool *ap,
                              lcoreid_t cid)
 {
     int err;
+    // 获取cid所属的flow规则
     struct sa_flow *flow = &sa_flows[cid];
 
     netif_flow_handler_param_t flow_handlers = {
@@ -208,6 +209,9 @@ static int sa_pool_del_filter(struct inet_ifaddr *ifa, struct sa_pool *ap,
             flow->port_base, htons(flow->mask), &flow_handlers);
 }
 
+/**
+ * 当inet_ifaddr被添加的时候，这个方法会被每一个slave_core调用
+ */
 int sa_pool_create(struct inet_ifaddr *ifa, uint16_t low, uint16_t high)
 {
     int err;
@@ -339,7 +343,7 @@ sa_pool_hash(const struct sa_pool *ap, const struct sockaddr_storage *ss)
         vect[0] = ntohl(sin->sin_addr.s_addr) & 0xffff;
         vect[1] = ntohs(sin->sin_port);
         hashkey = (vect[0] + vect[1]) % ap->pool_hash_sz;
-        // 每个realService对应的IP和端口都对应一个sa_entry_pool
+        // 每个realService对应的IP和端口都对应一个sa_entry_pool，这样才不会导致端口冲突，得到一个正确的五元组
         return &ap->pool_hash[hashkey];
     } else if (ss->ss_family == AF_INET6) {
         uint32_t vect[5] = { 0 };
@@ -357,6 +361,7 @@ sa_pool_hash(const struct sa_pool *ap, const struct sockaddr_storage *ss)
 
 /**
 从pool的空闲列表取出可用的localIp和localPort
+ss：sourceAddr
  */
 static inline int sa_pool_fetch(struct sa_entry_pool *pool,
                                 struct sockaddr_storage *ss)
@@ -390,6 +395,7 @@ static inline int sa_pool_fetch(struct sa_entry_pool *pool,
         return EDPVS_NOTSUPP;
     }
 
+    // 标记为已使用
     ent->flags |= SA_F_USED;
     list_move_tail(&ent->list, &pool->used_enties);
     pool->used_cnt++;
@@ -738,8 +744,8 @@ int sa_pool_init(void)
 
     /* enabled lcore should not change after init 
     如果使用的是：dpvs.conf.sample，那么
-    sa_nlcore = 8
-    sa_lcore_mask = 0b111111110
+    cpu type为slave的数量：sa_nlcore = 8
+    sa_lcore_mask = 0b111111110，表明从0开始，cpu_id第1到8位为slave
     */
     netif_get_slave_lcores(&sa_nlcore, &sa_lcore_mask);
 
@@ -751,7 +757,7 @@ int sa_pool_init(void)
 
     port_base = 0;
     for (cid = 0; cid < DPVS_MAX_LCORE; cid++) {
-        if (cid >= 64 || !(sa_lcore_mask & (1L << cid))) // 通过前面的sa_lcore_mask掩码筛选出正确的cid 费这老大劲服了
+        if (cid >= 64 || !(sa_lcore_mask & (1L << cid))) // 通过前面的sa_lcore_mask掩码筛选出slave_core 费这老大劲服了
             continue;
         assert(rte_lcore_is_enabled(cid) && cid != rte_get_main_lcore());
 

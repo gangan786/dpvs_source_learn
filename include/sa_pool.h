@@ -81,8 +81,8 @@ struct sa_entry_pool {
     /* another way is use total_used/free_cnt in sa_pool,
      * so that we need not travels the hash to get stats.
      * we use cnt here, since we may need per-pool stats. */
-    uint16_t                used_cnt; // 记录列表数量
-    uint16_t                free_cnt;
+    uint16_t                used_cnt; // 已使用的localIP和localPort数量
+    uint16_t                free_cnt; //  空闲的、未使用的localIP和localPort数量
     uint32_t                miss_cnt; // 记录当前pool分配localIP和localPort失败的次数
     uint16_t                shift;
 };

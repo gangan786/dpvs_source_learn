@@ -68,6 +68,7 @@ static inline int sockopt_msg_send(int clt_fd,
         return -ESOCKOPT_INVAL;
     }
 
+    // 发送消息头
     len = sizeof(struct dpvs_sock_msg);
     res = send_n(clt_fd, hdr, len, MSG_NOSIGNAL);
     if (len != res) {
@@ -76,6 +77,7 @@ static inline int sockopt_msg_send(int clt_fd,
         return -ESOCKOPT_IO;
     }
 
+    // 发送消息体
     if (data && data_len) {
         res = send_n(clt_fd, data, data_len, MSG_NOSIGNAL);
         if (data_len != res) {

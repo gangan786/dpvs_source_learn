@@ -69,7 +69,7 @@ msg_type_lock_t mt_lock[DPVS_MAX_LCORE];
 #define DPVS_MC_HLIST_MASK (DPVS_MC_HLIST_LEN - 1)
 struct list_head mc_wait_hlist[DPVS_MC_HLIST_LEN];
 
-/* per-lcore msg queue 这个ring似乎是用来在各个core传递信息的 */
+/* per-lcore msg queue master core通过这个队列向各个slave core传递信息 */
 struct rte_ring *msg_ring[DPVS_MAX_LCORE];
 
 #ifdef CONFIG_MSG_DEBUG
